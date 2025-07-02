@@ -308,6 +308,10 @@ if clear_file:
     st.session_state.current_index = 0
     st.session_state.labeling_locked = False
     st.session_state.auto_save_counter = 0
+    # Clear any existing UI state for radio buttons and checkboxes
+    keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('classification_', 'feature_'))]
+    for key in keys_to_clear:
+        del st.session_state[key]
     st.rerun()
 
 if load_file and file_path:
@@ -458,7 +462,7 @@ highlight_words_input = st.sidebar.text_area(
 
 highlight_color = st.sidebar.color_picker(
     "Highlight color",
-    value="#ff6b6b",
+    value="#ece800",
     help="Choose the color for highlighted words"
 )
 
@@ -487,6 +491,10 @@ if is_locked:
             st.session_state.labeled_data = pd.DataFrame()
             st.session_state.labeling_locked = False
             st.session_state.auto_save_counter = 0
+            # Clear any existing UI state for radio buttons and checkboxes
+            keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('classification_', 'feature_'))]
+            for key in keys_to_clear:
+                del st.session_state[key]
             st.rerun()
 else:
     classification_input = st.sidebar.text_area(
@@ -764,7 +772,7 @@ else:
                 default_index = 0
             
             classification_choice = st.radio(
-                "Choose classification:",
+                "",#"Choose classification:",
                 options=[None] + st.session_state.classification_labels,
                 index=default_index,
                 format_func=lambda x: "None" if x is None else x,
