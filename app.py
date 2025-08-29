@@ -7,6 +7,72 @@ import io
 import os
 from pathlib import Path
 import pyarrow.feather as feather
+import configparser
+
+def load_config(config_file):
+    """Load configuration from file"""
+    config = configparser.ConfigParser()
+    config.read(config_file)
+    
+    # Load data configuration
+    data_config = {}
+    if 'data' in config:
+        data_config = {
+            'file_path': config['data'].get('file_path', 'data.feather'),
+            'text_column': config['data'].get('text_column', 'content')
+        }
+    
+    # Load output configuration
+    output_config = {}
+    if 'output' in config:
+        output_config = {
+            'filename': config['output'].get('output_filename', 'labeled_data.feather'),
+            'columns': [col.strip() for col in config['output'].get('output_columns', '').split(',') if col.strip()]
+        }
+    
+    # Load highlighting configuration
+    highlighting_config = {}
+    if 'highlighting' in config:
+        highlighting_config = {
+            'color': config['highlighting'].get('color', '#ece800'),
+            'words': [word.strip() for word in config['highlighting'].get('words', '').split(',') if word.strip()]
+        }
+    
+    # Load multiple classification tasks
+    classification_tasks = {}
+    if 'classification_tasks' in config:
+        task_num = 1
+        while f'task{task_num}_name' in config['classification_tasks']:
+            task_name = config['classification_tasks'][f'task{task_num}_name']
+            task_labels = [label.strip() for label in config['classification_tasks'][f'task{task_num}_labels'].split(',')]
+            classification_tasks[f'task{task_num}'] = {
+                'name': task_name,
+                'labels': task_labels
+            }
+            task_num += 1
+    
+    # Load multiple feature tasks
+    feature_tasks = {}
+    if 'feature_tasks' in config:
+        task_num = 1
+        while f'task{task_num}_name' in config['feature_tasks']:
+            task_name = config['feature_tasks'][f'task{task_num}_name']
+            task_labels = [label.strip() for label in config['feature_tasks'][f'task{task_num}_labels'].split(',')]
+            feature_tasks[f'task{task_num}'] = {
+                'name': task_name,
+                'labels': task_labels
+            }
+            task_num += 1
+    
+    # Load legacy single features section for backward compatibility
+    legacy_features = {}
+    if 'features' in config and 'name' in config['features']:
+        legacy_features = {
+            'name': config['features'].get('name', 'Features'),
+            'labels': [label.strip() for label in config['features']['labels'].split(',')]
+        }
+    
+    return data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config
 
 # Configure page
 st.set_page_config(
@@ -23,6 +89,8 @@ if 'current_index' not in st.session_state:
     st.session_state.current_index = 0
 if 'data' not in st.session_state:
     st.session_state.data = None
+if 'data_mode' not in st.session_state:
+    st.session_state.data_mode = 'memory'  # Default to memory mode
 if 'labeled_data' not in st.session_state:
     st.session_state.labeled_data = pd.DataFrame()
 if 'file_path' not in st.session_state:
@@ -37,18 +105,96 @@ if 'chunk_start_idx' not in st.session_state:
     st.session_state.chunk_start_idx = 0
 if 'selected_columns' not in st.session_state:
     st.session_state.selected_columns = []
+if 'text_column' not in st.session_state:
+    st.session_state.text_column = 'content'
 if 'highlight_words' not in st.session_state:
     st.session_state.highlight_words = []
 if 'classification_labels' not in st.session_state:
     st.session_state.classification_labels = []
+if 'classification_tasks' not in st.session_state:
+    st.session_state.classification_tasks = {}
 if 'feature_labels' not in st.session_state:
     st.session_state.feature_labels = []
+if 'feature_tasks' not in st.session_state:
+    st.session_state.feature_tasks = {}
 if 'labeling_locked' not in st.session_state:
     st.session_state.labeling_locked = False
 if 'auto_save_counter' not in st.session_state:
     st.session_state.auto_save_counter = 0
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
+
+# Load default configuration on startup
+if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
+    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config = load_config('default.cfg')
+    st.session_state.classification_tasks = classification_tasks
+    st.session_state.feature_tasks = feature_tasks
+    if legacy_features and 'labels' in legacy_features:
+        st.session_state.feature_labels = legacy_features['labels']
+    if highlighting_config:
+        st.session_state.highlight_words = highlighting_config.get('words', [])
+    
+    # Store output configuration
+    if output_config:
+        st.session_state.output_config = output_config
+    
+    # Auto-load data file if specified and exists
+    if data_config and 'file_path' in data_config:
+        data_file_path = data_config['file_path']
+        if os.path.exists(data_file_path) and st.session_state.data is None:
+            try:
+                # Load the data file
+                if data_file_path.endswith('.feather'):
+                    st.session_state.data = pd.read_feather(data_file_path)
+                elif data_file_path.endswith('.csv'):
+                    st.session_state.data = pd.read_csv(data_file_path)
+                elif data_file_path.endswith('.json'):
+                    st.session_state.data = pd.read_json(data_file_path)
+                
+                if st.session_state.data is not None:
+                    # Set up for large file handling
+                    st.session_state.file_path = data_file_path
+                    st.session_state.total_rows = len(st.session_state.data)
+                    
+                    # Auto-select the text column if specified
+                    text_column = data_config.get('text_column', 'content')
+                    if text_column in st.session_state.data.columns:
+                        st.session_state.text_column = text_column
+                        # Set selected columns from output config if available
+                        if output_config and 'columns' in output_config and output_config['columns']:
+                            # Filter output columns to only include ones that exist in the data
+                            valid_columns = [col for col in output_config['columns'] if col in st.session_state.data.columns]
+                            st.session_state.selected_columns = valid_columns
+                        else:
+                            st.session_state.selected_columns = [text_column]
+                    else:
+                        # If specified column doesn't exist, use the first text column
+                        text_columns = [col for col in st.session_state.data.columns 
+                                      if st.session_state.data[col].dtype == 'object']
+                        if text_columns:
+                            st.session_state.text_column = text_columns[0]
+                            st.session_state.selected_columns = [text_columns[0]]
+                    
+                    # Initialize label columns if they don't exist
+                    for task_key, task_info in st.session_state.classification_tasks.items():
+                        col_name = f"{task_info['name']}_label"
+                        if col_name not in st.session_state.data.columns:
+                            st.session_state.data[col_name] = ""
+                    
+                    if st.session_state.feature_labels:
+                        feature_col_name = "label_features"
+                        if feature_col_name not in st.session_state.data.columns:
+                            st.session_state.data[feature_col_name] = ""
+                    
+                    # Initialize feature task columns
+                    for task_key, task_info in st.session_state.feature_tasks.items():
+                        col_name = f"{task_info['name']}_features"
+                        if col_name not in st.session_state.data.columns:
+                            st.session_state.data[col_name] = ""
+                            
+            except Exception as e:
+                # Don't show error on startup, just continue without auto-loading
+                pass
 
 
 def get_total_rows(file_path: str) -> int:
@@ -132,6 +278,65 @@ def save_labeled_row(row_data: pd.Series, classification: str, features: List[st
     if st.session_state.auto_save_counter % 5 == 0:
         auto_save_to_feather()
 
+def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dict, feature_choices: Dict = None, features: List[str] = None):
+    """Save a labeled row with multiple classification tasks and feature tasks to the labeled_data dataframe."""
+    # Create new row with selected columns plus labels
+    new_row = {}
+    
+    # Add selected columns from original data
+    for col in st.session_state.selected_columns:
+        if col in row_data:
+            new_row[col] = row_data[col]
+    
+    # Add metadata
+    new_row['original_index'] = st.session_state.current_index
+    
+    # Add each classification task as a separate column
+    for task_key, choice in classification_choices.items():
+        task_info = st.session_state.classification_tasks[task_key]
+        task_col_name = f"{task_info['name']}_label"
+        # Handle NaN and None values
+        if pd.isna(choice) or choice is None or choice == "None":
+            new_row[task_col_name] = ""
+        else:
+            new_row[task_col_name] = str(choice)
+    
+    # Add feature tasks
+    if feature_choices:
+        for task_key, selected_features in feature_choices.items():
+            task_info = st.session_state.feature_tasks[task_key]
+            task_col_name = f"{task_info['name']}_features"
+            # Handle NaN and None values
+            if pd.isna(selected_features) or selected_features is None:
+                new_row[task_col_name] = ""
+            elif isinstance(selected_features, (list, tuple)) and len(selected_features) > 0:
+                new_row[task_col_name] = ', '.join(str(f) for f in selected_features if not pd.isna(f))
+            else:
+                new_row[task_col_name] = ""
+    
+    # Add legacy features (for backward compatibility)
+    if features:
+        # Handle NaN and None values
+        if pd.isna(features) or features is None:
+            new_row['label_features'] = ""
+        elif isinstance(features, (list, tuple)) and len(features) > 0:
+            new_row['label_features'] = ', '.join(str(f) for f in features if not pd.isna(f))
+        else:
+            new_row['label_features'] = ""
+    
+    # Convert to DataFrame and append
+    new_row_df = pd.DataFrame([new_row])
+    
+    if st.session_state.labeled_data.empty:
+        st.session_state.labeled_data = new_row_df
+    else:
+        st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df], ignore_index=True)
+    
+    # Increment auto-save counter and check for auto-save
+    st.session_state.auto_save_counter += 1
+    if st.session_state.auto_save_counter % 5 == 0:
+        auto_save_to_feather()
+
 def auto_save_to_feather():
     """Auto-save labeled data to feather file every 5 labels."""
     if not st.session_state.labeled_data.empty:
@@ -141,6 +346,77 @@ def auto_save_to_feather():
             st.toast(f"🔄 Auto-saved {len(st.session_state.labeled_data)} labels to {filename}", icon="💾")
         except Exception as e:
             st.toast(f"Auto-save failed: {str(e)}", icon="⚠️")
+
+def is_item_fully_labeled(original_index):
+    """Check if an item has all required classification tasks labeled (not None)."""
+    if st.session_state.labeled_data.empty:
+        return False
+    
+    # Find the row for this item
+    item_rows = st.session_state.labeled_data[
+        st.session_state.labeled_data['original_index'] == original_index
+    ]
+    
+    if item_rows.empty:
+        return False
+    
+    item_row = item_rows.iloc[0]
+    
+    # Check if all classification tasks have non-empty labels
+    if st.session_state.classification_tasks:
+        for task_key, task_info in st.session_state.classification_tasks.items():
+            task_col_name = f"{task_info['name']}_label"
+            if task_col_name not in item_row or not item_row[task_col_name] or item_row[task_col_name] == "None":
+                return False
+        return True
+    else:
+        # Backward compatibility for single classification
+        if 'label_classification' in item_row:
+            return item_row['label_classification'] is not None and item_row['label_classification'] != "None"
+    
+    return False
+
+def save_current_selections():
+    """Save current widget selections automatically (like original app)."""
+    if not (st.session_state.file_path and st.session_state.current_index < st.session_state.total_rows):
+        return
+    
+    current_id = st.session_state.current_index
+    current_row = get_current_row()
+    if current_row is None:
+        return
+    
+    # Check if there are any selections to save
+    has_selections = False
+    classification_choices = {}
+    feature_choices = {}
+    
+    # Check classification choices
+    if st.session_state.classification_tasks:
+        for task_key, task_info in st.session_state.classification_tasks.items():
+            widget_key = f"classification_{current_id}_{task_key}"
+            if widget_key in st.session_state:
+                choice = st.session_state[widget_key]
+                if choice and choice != "None":
+                    classification_choices[task_key] = choice
+                    has_selections = True
+                else:
+                    classification_choices[task_key] = None
+    
+    # Check feature choices
+    if st.session_state.feature_tasks:
+        for task_key, task_info in st.session_state.feature_tasks.items():
+            selected_features = []
+            for feature in task_info['labels']:
+                feature_key = f"feature_{current_id}_{task_key}_{feature}"
+                if feature_key in st.session_state and st.session_state[feature_key]:
+                    selected_features.append(feature)
+                    has_selections = True
+            feature_choices[task_key] = selected_features
+    
+    # Save if there are any selections
+    if has_selections:
+        save_labeled_row_multi_task(current_row, classification_choices, feature_choices, [])
 
 def save_current_label_if_exists():
     """Save current label before navigation if user has made selections."""
@@ -195,6 +471,39 @@ def save_labeled_data_to_feather():
             st.error(f"Error saving to feather: {str(e)}")
             return None
     return None
+
+def load_data_file(file_path: str):
+    """Load a data file, automatically choosing chunked or memory mode based on file size."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    if not file_path.lower().endswith('.feather'):
+        raise ValueError("Only .feather files are supported")
+    
+    # Get file size info
+    file_size = os.path.getsize(file_path)
+    file_size_mb = file_size / (1024 * 1024)
+    
+    if file_size_mb > 200:  # Use chunked loading for large files
+        # Chunked mode
+        st.session_state.total_rows = get_total_rows(file_path)
+        st.session_state.file_path = file_path
+        st.session_state.current_index = 0
+        st.session_state.chunk_start_idx = 0
+        st.session_state.current_chunk = None
+        st.session_state.data_mode = 'chunked'
+        
+        # Load first chunk to get column information
+        first_chunk = load_chunk(file_path, 0, min(100, st.session_state.chunk_size))
+        st.session_state.data = first_chunk  # For column selection
+    else:
+        # Memory mode
+        full_data = pd.read_feather(file_path)
+        st.session_state.data = full_data
+        st.session_state.total_rows = len(full_data)
+        st.session_state.file_path = file_path
+        st.session_state.data_mode = 'memory'
+        st.session_state.current_index = 0
 
 def load_labeled_data_from_feather(file_path: str):
     """Load previously saved labeled data from feather file."""
@@ -261,203 +570,92 @@ def load_labels_from_file(uploaded_file):
     except Exception as e:
         st.error(f"Error loading labels: {str(e)}")
 
-# Sidebar for configuration
-st.sidebar.header("📊 Data Selection")
-
-st.sidebar.divider()
-
-# File path input for large files
-st.sidebar.subheader("💽 Local File Selection")
-
-# Initialize file path in session state
-if 'selected_file_path' not in st.session_state:
-    st.session_state.selected_file_path = ""
-
-# File path input
-file_path = st.sidebar.text_input(
-    "Enter file path:",
-    value=st.session_state.selected_file_path,
-    help="Enter the full path to your feather file (e.g., C:\\Users\\username\\data\\file.feather)"
-)
-
-# Update session state when path changes
-if file_path != st.session_state.selected_file_path:
-    st.session_state.selected_file_path = file_path
-
-# Browse button helper text
-st.sidebar.markdown("💡 **Tip:** Copy and paste the full file path from File Explorer")
-
-# Show example paths
-with st.sidebar.expander("📋 Example file paths"):
-    st.code("C:\\Users\\username\\Documents\\data.feather")
-    st.code("D:\\datasets\\tv_content\\large_file.feather")
-    st.code("//server/shared/data/content.feather")
-
-# Load button for file path
-col1, col2 = st.sidebar.columns([2, 1])
-with col1:
-    load_file = st.button("📁 Load File", use_container_width=True)
-with col2:
-    clear_file = st.button("🗑️ Clear", use_container_width=True)
-
-if clear_file:
-    st.session_state.data = None
-    st.session_state.selected_file_path = ""
-    st.session_state.labels = {}
-    st.session_state.labeled_data = pd.DataFrame()
-    st.session_state.current_index = 0
-    st.session_state.labeling_locked = False
-    st.session_state.auto_save_counter = 0
-    # Clear any existing UI state for radio buttons and checkboxes
-    keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('classification_', 'feature_'))]
-    for key in keys_to_clear:
-        del st.session_state[key]
-    st.rerun()
-
-if load_file and file_path:
-    try:
-        if not os.path.exists(file_path):
-            st.sidebar.error(f"❌ File not found: {file_path}")
-        elif not file_path.lower().endswith('.feather'):
-            st.sidebar.error("❌ Please select a feather file")
-        else:
-            # Get file size info
-            file_size = os.path.getsize(file_path)
-            file_size_mb = file_size / (1024 * 1024)
-            
-            if file_size_mb > 500:  # Show warning for very large files
-                st.sidebar.warning(f"⚠️ Large file detected ({file_size_mb:.1f} MB). Using chunked loading...")
-            
-            with st.sidebar.status("Analyzing file...") as status:
-                # Get total rows and first chunk for column info
-                st.session_state.total_rows = get_total_rows(file_path)
-                st.session_state.file_path = file_path
-                st.session_state.current_index = 0
-                st.session_state.chunk_start_idx = 0
-                st.session_state.current_chunk = None
-                
-                # Load first chunk to get column information
-                first_chunk = load_chunk(file_path, 0, min(100, st.session_state.chunk_size))
-                st.session_state.data = first_chunk  # For column selection
-                
-                status.update(label="File loaded successfully!", state="complete")
-            
-            st.sidebar.success(f"✅ Ready to process {st.session_state.total_rows:,} rows")
-            st.sidebar.info(f"📊 File size: {file_size_mb:.1f} MB")
-            
-    except FileNotFoundError:
-        st.sidebar.error(f"❌ File not found: {file_path}")
-    except PermissionError:
-        st.sidebar.error(f"❌ Permission denied. Cannot access: {file_path}")
-    except pd.errors.EmptyDataError:
-        st.sidebar.error("❌ The file appears to be empty")
-    except Exception as e:
-        st.sidebar.error(f"❌ Error loading file: {str(e)}")
-
-# Alternative: File upload for smaller files (loads entirely into memory)
-st.sidebar.subheader("📤 Upload Small File")
-st.sidebar.markdown("*For files < 200MB (loads entirely into memory)*")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload feather file",
-    type=['feather'],
-    help="Upload a feather file (recommended for files < 200MB)"
-)
-
-if uploaded_file is not None:
-    try:
-        # Save uploaded file temporarily and load
-        with open("temp_upload.feather", "wb") as f:
-            f.write(uploaded_file.getvalue())
-        full_data = pd.read_feather("temp_upload.feather")
-        os.remove("temp_upload.feather")  # Clean up temp file
-        
-        st.session_state.data = full_data
-        st.session_state.total_rows = len(full_data)
-        st.session_state.file_path = ""  # Clear file path for uploaded files
-        st.session_state.current_chunk = full_data
-        st.session_state.chunk_start_idx = 0
-        st.sidebar.success(f"✅ Loaded {len(full_data):,} rows into memory")
-    except Exception as e:
-        st.sidebar.error(f"❌ Error loading file: {str(e)}")
-
-# Show current loaded file info
-if st.session_state.data is not None:
-    if st.session_state.file_path:
-        st.sidebar.success(f"📊 **Large file mode:** {st.session_state.total_rows:,} total rows")
-        st.sidebar.info(f"🔄 **Chunked loading:** {st.session_state.chunk_size:,} rows at a time")
-    else:
-        st.sidebar.success(f"📊 **Memory mode:** {st.session_state.total_rows:,} rows loaded")
-    
-    # Show labeled data progress
-    if not st.session_state.labeled_data.empty:
-        labeled_count = len(st.session_state.labeled_data)
-        st.sidebar.info(f"🏷️ **Labeled so far:** {labeled_count:,} items")
-
-# Column selection
-if st.session_state.data is not None:
-    st.sidebar.subheader("📋 Column Configuration")
-    
-    # Text column selection
-    text_column = st.sidebar.selectbox(
-        "Select text column to label",
-        options=st.session_state.data.columns.tolist(),
-        help="Choose the column containing the text content to label"
-    )
-    
-    # Columns to include in labeled dataset
-    st.sidebar.markdown("**Columns to save with labels:**")
-    available_columns = st.session_state.data.columns.tolist()
-    
-    # Default selection includes text column
-    default_selected = [text_column] if text_column in available_columns else []
-    if not st.session_state.selected_columns:
-        st.session_state.selected_columns = default_selected
-    
-    selected_columns = st.sidebar.multiselect(
-        "Choose columns to include in labeled dataset",
-        options=available_columns,
-        default=st.session_state.selected_columns,
-        help="Select which columns from the original data to save with your labels"
-    )
-    
-    st.session_state.selected_columns = selected_columns
-    
-    # Show selection summary
-    if selected_columns:
-        st.sidebar.success(f"✅ Will save {len(selected_columns)} columns with labels")
-    else:
-        st.sidebar.warning("⚠️ No columns selected for saving")
-    
-    # Display basic info about the dataset
-    st.sidebar.subheader("📈 Dataset Info")
-    st.sidebar.write(f"**Total Rows:** {st.session_state.total_rows:,}")
-    st.sidebar.write(f"**Available Columns:** {len(st.session_state.data.columns)}")
-    
-    # Chunk size configuration for large files
-    if st.session_state.file_path:
-        st.sidebar.subheader("⚙️ Performance Settings")
-        chunk_size = st.sidebar.slider(
-            "Chunk size (rows loaded at once)",
-            min_value=100,
-            max_value=5000,
-            value=st.session_state.chunk_size,
-            step=100,
-            help="Larger chunks use more memory but may be faster"
-        )
-        if chunk_size != st.session_state.chunk_size:
-            st.session_state.chunk_size = chunk_size
-            st.session_state.current_chunk = None  # Force reload of chunk
-
-# Configuration section
+# ===================== MINIMAL SIDEBAR =====================
 st.sidebar.header("⚙️ Configuration")
 
-# Highlight words configuration
+# Configuration file upload
+uploaded_config = st.sidebar.file_uploader("Upload config file (.cfg)", type=['cfg'])
+if uploaded_config is not None:
+    # Save uploaded file temporarily and load it
+    with open('temp_config.cfg', 'wb') as f:
+        f.write(uploaded_config.getbuffer())
+    
+    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config = load_config('temp_config.cfg')
+    st.session_state.classification_tasks = classification_tasks
+    st.session_state.feature_tasks = feature_tasks
+    
+    # Load highlighting words from config
+    if highlighting_config and 'words' in highlighting_config:
+        st.session_state.highlight_words = highlighting_config['words']
+    
+    # Store output configuration
+    if output_config:
+        st.session_state.output_config = output_config
+    
+    # Load legacy features
+    if legacy_features and 'labels' in legacy_features:
+        st.session_state.feature_labels = legacy_features['labels']
+    
+    # Try to auto-load data file if specified in config
+    if data_config and 'file_path' in data_config:
+        data_file_path = data_config['file_path']
+        try:
+            if os.path.exists(data_file_path):
+                data = load_data_file(data_file_path)
+                if data is not None:
+                    st.session_state.data = data
+                    st.session_state.file_path = data_file_path
+                    st.session_state.total_rows = len(data)
+                    st.session_state.current_index = 0
+                    
+                    # Set text column from config
+                    text_column = data_config.get('text_column', 'content')
+                    if text_column in st.session_state.data.columns:
+                        st.session_state.text_column = text_column
+                        # Set selected columns from output config if available
+                        if output_config and 'columns' in output_config and output_config['columns']:
+                            # Filter output columns to only include ones that exist in the data
+                            valid_columns = [col for col in output_config['columns'] if col in st.session_state.data.columns]
+                            st.session_state.selected_columns = valid_columns
+                        else:
+                            st.session_state.selected_columns = [text_column]
+                    else:
+                        # Fall back to first text column
+                        text_columns = [col for col in st.session_state.data.columns 
+                                      if st.session_state.data[col].dtype == 'object']
+                        if text_columns:
+                            st.session_state.text_column = text_columns[0]
+                            st.session_state.selected_columns = [text_columns[0]]
+                    
+                    st.sidebar.success(f"✅ Auto-loaded {len(st.session_state.data)} records!")
+        except Exception as e:
+            st.sidebar.error(f"Could not load data file: {str(e)}")
+    
+    # Remove temp file
+    if os.path.exists('temp_config.cfg'):
+        os.remove('temp_config.cfg')
+    
+    st.sidebar.success("✅ Configuration loaded successfully!")
+    st.rerun()
+
+# Display current configuration status
+if st.session_state.classification_tasks:
+    st.sidebar.write("**Classification Tasks:**")
+    for task_key, task_info in st.session_state.classification_tasks.items():
+        st.sidebar.write(f"- {task_info['name']}: {len(task_info['labels'])} labels")
+
+if st.session_state.feature_tasks:
+    st.sidebar.write("**Feature Tasks:**")
+    for task_key, task_info in st.session_state.feature_tasks.items():
+        st.sidebar.write(f"- {task_info['name']}: {len(task_info['labels'])} options")
+
+# Text highlighting configuration
 st.sidebar.subheader("🎨 Text Highlighting")
 highlight_words_input = st.sidebar.text_area(
-    "Words to highlight (one per line)",
-    value="\n".join(st.session_state.highlight_words),
-    height=100,
-    help="Enter words you want to highlight in the text, one per line"
+    "Words to highlight (comma-separated)",
+    value=",".join(st.session_state.highlight_words),
+    height=60,
+    help="Enter words to highlight, separated by commas"
 )
 
 highlight_color = st.sidebar.color_picker(
@@ -468,116 +666,9 @@ highlight_color = st.sidebar.color_picker(
 
 if highlight_words_input:
     st.session_state.highlight_words = [
-        word.strip() for word in highlight_words_input.split('\n') 
+        word.strip() for word in highlight_words_input.split(',') 
         if word.strip()
     ]
-
-# Classification labels configuration
-st.sidebar.subheader("🏷️ Classification Labels")
-
-# Check if labeling is locked
-is_locked = st.session_state.labeling_locked and not st.session_state.labeled_data.empty
-
-if is_locked:
-    st.sidebar.info("🔒 Labels locked during labeling session")
-    st.sidebar.write("**Current classification options:**")
-    for label in st.session_state.classification_labels:
-        st.sidebar.write(f"- {label}")
-    
-    # Show warning and reset option
-    with st.sidebar.expander("⚠️ Change Labels (will lose progress)"):
-        st.warning(f"Changing labels will abandon {len(st.session_state.labeled_data)} labeled items")
-        if st.button("🗑️ Reset and Change Labels", type="secondary"):
-            st.session_state.labeled_data = pd.DataFrame()
-            st.session_state.labeling_locked = False
-            st.session_state.auto_save_counter = 0
-            # Clear any existing UI state for radio buttons and checkboxes
-            keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('classification_', 'feature_'))]
-            for key in keys_to_clear:
-                del st.session_state[key]
-            st.rerun()
-else:
-    classification_input = st.sidebar.text_area(
-        "Classification options (one per line)",
-        value="\n".join(st.session_state.classification_labels),
-        height=100,
-        help="Enter classification options, one per line (pick one)"
-    )
-    
-    if classification_input:
-        st.session_state.classification_labels = [
-            label.strip() for label in classification_input.split('\n') 
-            if label.strip()
-        ]
-
-# Feature labels configuration
-st.sidebar.subheader("🔖 Feature Labels")
-
-if is_locked:
-    st.sidebar.info("🔒 Labels locked during labeling session")
-    st.sidebar.write("**Current feature options:**")
-    for label in st.session_state.feature_labels:
-        st.sidebar.write(f"- {label}")
-    
-    # Note: Reset option already shown in classification section
-else:
-    feature_input = st.sidebar.text_area(
-        "Feature options (one per line)",
-        value="\n".join(st.session_state.feature_labels),
-        height=100,
-        help="Enter feature options, one per line (pick zero or more)"
-    )
-    
-    if feature_input:
-        st.session_state.feature_labels = [
-            label.strip() for label in feature_input.split('\n') 
-            if label.strip()
-        ]
-
-# Labels management
-st.sidebar.header("💾 Labels Management")
-
-# Load previously saved labeled data - File path input
-st.sidebar.subheader("📂 Load Previous Progress (Local File)")
-progress_file_path = st.sidebar.text_input(
-    "Enter path to saved progress file:",
-    help="Enter the full path to your saved .feather file (e.g., C:\\Users\\username\\tv_content_labeled.feather)"
-)
-
-if progress_file_path and st.sidebar.button("� Load from Path"):
-    try:
-        if not os.path.exists(progress_file_path):
-            st.sidebar.error(f"❌ File not found: {progress_file_path}")
-        elif not progress_file_path.lower().endswith('.feather'):
-            st.sidebar.error("❌ Please select a feather file")
-        else:
-            load_labeled_data_from_feather(progress_file_path)
-    except Exception as e:
-        st.sidebar.error(f"Error loading progress: {str(e)}")
-
-# Load previously saved labeled data - File upload
-st.sidebar.subheader("📤 Upload Previous Progress")
-st.sidebar.markdown("*For progress files < 200MB*")
-uploaded_feather = st.sidebar.file_uploader(
-    "Upload saved progress file",
-    type=['feather'],
-    help="Upload a previously saved .feather file with labeled data"
-)
-
-if uploaded_feather is not None:
-    try:
-        # Save uploaded file temporarily and load
-        with open("temp_labeled.feather", "wb") as f:
-            f.write(uploaded_feather.getvalue())
-        load_labeled_data_from_feather("temp_labeled.feather")
-        os.remove("temp_labeled.feather")  # Clean up temp file
-    except Exception as e:
-        st.sidebar.error(f"Error loading progress: {str(e)}")
-
-# Show current progress
-if not st.session_state.labeled_data.empty:
-    st.sidebar.info(f"📊 **Current progress:** {len(st.session_state.labeled_data):,} items labeled")
-    st.sidebar.info("� **Labeling session active** - labels are locked")
 
 # Main content area
 st.title("📺 TV Content Labeling Tool")
@@ -587,35 +678,39 @@ if not st.session_state.labeled_data.empty:
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        # Manual save button
+        # Auto-save on navigation
         if st.button("💾 Save Progress", type="primary", use_container_width=True):
             filename = save_labeled_data_to_feather()
             if filename:
                 st.success(f"✅ Saved {len(st.session_state.labeled_data)} labels to {filename}")
     
     with col2:
-        # Download button for the saved file
-        if os.path.exists("tv_content_labeled.feather"):
-            with open("tv_content_labeled.feather", "rb") as file:
-                st.download_button(
-                    label="📥 Download File",
-                    data=file.read(),
-                    file_name="tv_content_labeled.feather",
-                    mime="application/octet-stream",
-                    use_container_width=True
-                )
+        # Download button that automatically saves first
+        if not st.session_state.labeled_data.empty:
+            # Save to file for download
+            filename = save_labeled_data_to_feather()
+            if filename and os.path.exists(filename):
+                with open(filename, "rb") as file:
+                    st.download_button(
+                        label="📥 Download File",
+                        data=file.read(),
+                        file_name="tv_content_labeled.feather",
+                        mime="application/octet-stream",
+                        use_container_width=True
+                    )
+            else:
+                st.button("📥 Download File", disabled=True, use_container_width=True, help="Error creating file")
         else:
-            st.button("📥 Download File", disabled=True, use_container_width=True, help="Save progress first to enable download")
+            st.button("📥 Download File", disabled=True, use_container_width=True, help="No labels to download")
     
     with col3:
-        # Show progress summary
-        labeled_count = len(st.session_state.labeled_data)
-        st.metric("Labels Saved", f"{labeled_count:,}")
+        # Auto-save status placeholder
+        pass
     
     st.markdown("---")
 
 if st.session_state.data is None:
-    st.info("👆 Please select a .feather file to get started")
+    st.info("� No data loaded. Please select a .feather file above or upload a config file with data path.")
     
     # Create columns for better layout
     col1, col2 = st.columns([2, 1])
@@ -642,7 +737,7 @@ if st.session_state.data is None:
         ### 🔄 Auto-Save Features:
         - **Auto-save on navigation**: Labels are automatically saved when you navigate (Previous/Next/Jump)
         - **Auto-save to file**: Every 5th label triggers an automatic save to `tv_content_labeled_autosave.feather`
-        - **Manual save**: Use "💾 Save Label" button for immediate saving with feedback
+        - **Auto-save**: Labels are automatically saved when you navigate to another item
         """)
     
     with col2:
@@ -678,28 +773,6 @@ else:
         st.warning("⚠️ Please select columns to include in the labeled dataset")
         st.stop()
     
-    # Navigation controls
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        if st.button("⬅️ Previous", disabled=st.session_state.current_index <= 0):
-            save_current_label_if_exists()
-            st.session_state.current_index -= 1
-            st.rerun()
-    
-    with col2:
-        st.markdown(f"<div style='text-align: center;'><h3>Item {st.session_state.current_index + 1:,} of {st.session_state.total_rows:,}</h3></div>", unsafe_allow_html=True)
-    
-    with col3:
-        if st.button("Next ➡️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1):
-            save_current_label_if_exists()
-            st.session_state.current_index += 1
-            st.rerun()
-    
-    # Progress bar
-    progress = (st.session_state.current_index + 1) / st.session_state.total_rows
-    st.progress(progress)
-    
     # Get current row data
     current_row = get_current_row()
     
@@ -707,7 +780,7 @@ else:
         st.error("❌ Could not load current row data")
         st.stop()
     
-    current_text = current_row[text_column] if text_column in current_row else ""
+    current_text = current_row[st.session_state.text_column] if st.session_state.text_column in current_row else ""
     
     # Check if this item is already labeled
     current_id = st.session_state.current_index
@@ -716,8 +789,12 @@ else:
     if is_already_labeled:
         existing_label_row = st.session_state.labeled_data[st.session_state.labeled_data['original_index'] == current_id].iloc[0]
         existing_classification = existing_label_row.get('label_classification', '')
-        existing_features = existing_label_row.get('label_features', '').split(', ') if existing_label_row.get('label_features') else []
-        st.info(f"✅ This item is already labeled (Classification: {existing_classification}, Features: {', '.join(existing_features)})")
+        existing_features_value = existing_label_row.get('label_features', '')
+        # Handle NaN values from pandas
+        if pd.isna(existing_features_value) or existing_features_value is None:
+            existing_features = []
+        else:
+            existing_features = existing_features_value.split(', ') if existing_features_value else []
     
     # Beautify and highlight text
     beautified_text = beautify_text(current_text)
@@ -743,7 +820,7 @@ else:
     if len(st.session_state.selected_columns) > 1:
         with st.expander("📋 Additional Column Data"):
             for col in st.session_state.selected_columns:
-                if col != text_column and col in current_row:
+                if col != st.session_state.text_column and col in current_row:
                     st.write(f"**{col}:** {current_row[col]}")
     
     # Labeling section
@@ -758,84 +835,165 @@ else:
         current_classification = existing_classification if existing_classification else None
         current_features = [f for f in existing_features if f]
     
-    col1, col2 = st.columns(2)
+    # Combined labeling section (classification tasks + features in same row)
     
-    # Classification labeling (pick one)
-    with col1:
-        if st.session_state.classification_labels:
-            st.markdown("**Classification (pick one):**")
-            
-            # Create radio buttons for classification
-            if current_classification and current_classification in st.session_state.classification_labels:
-                default_index = st.session_state.classification_labels.index(current_classification) + 1
-            else:
-                default_index = 0
-            
-            classification_choice = st.radio(
-                "",#"Choose classification:",
-                options=[None] + st.session_state.classification_labels,
-                index=default_index,
-                format_func=lambda x: "None" if x is None else x,
-                key=f"classification_{current_id}"
-            )
+    # Calculate total columns needed (classification tasks + feature tasks + legacy features)
+    num_classification_tasks = len(st.session_state.classification_tasks) if st.session_state.classification_tasks else 0
+    num_feature_tasks = len(st.session_state.feature_tasks) if st.session_state.feature_tasks else 0
+    num_legacy_features = 1 if st.session_state.feature_labels else 0
+    total_cols = num_classification_tasks + num_feature_tasks + num_legacy_features
     
-    # Feature labeling (pick zero or more)
+    if total_cols > 0:
+        # Create columns for all labeling tasks
+        all_cols = st.columns(total_cols)
+        classification_choices = {}
+        
+        # Classification tasks first
+        col_idx = 0
+        if st.session_state.classification_tasks:
+            for task_key, task_info in st.session_state.classification_tasks.items():
+                with all_cols[col_idx]:
+                    st.markdown(f"**{task_info['name']}**")
+                    st.caption("(pick one)")
+                    
+                    # Get current value for this task from existing labels (simplified like original)
+                    current_task_value = None
+                    if is_already_labeled:
+                        # Look for existing label for this task
+                        existing_row = st.session_state.labeled_data[
+                            st.session_state.labeled_data['original_index'] == current_id
+                        ]
+                        if not existing_row.empty:
+                            task_col_name = f"{task_info['name']}_label"
+                            if task_col_name in existing_row.columns:
+                                current_task_value = existing_row.iloc[0][task_col_name]
+                                # Handle NaN values
+                                if pd.isna(current_task_value):
+                                    current_task_value = None
+                    
+                    # Calculate default index directly (like original app)
+                    if current_task_value and current_task_value in task_info['labels']:
+                        default_index = task_info['labels'].index(current_task_value) + 1
+                    else:
+                        default_index = 0
+                    
+                    # Create radio button with simple key (exactly like original)
+                    classification_choices[task_key] = st.radio(
+                        f"Select {task_info['name']}",
+                        options=[None] + task_info['labels'],
+                        index=default_index,
+                        format_func=lambda x: "None" if x is None else x,
+                        key=f"classification_{current_id}_{task_key}",
+                        label_visibility="collapsed"
+                    )
+                    col_idx += 1
+        
+        # Feature tasks
+        feature_choices = {}
+        if st.session_state.feature_tasks:
+            for task_key, task_info in st.session_state.feature_tasks.items():
+                with all_cols[col_idx]:
+                    st.markdown(f"**{task_info['name']}**")
+                    st.caption("(pick zero or more)")
+                    
+                    # Get current values for this feature task from existing labels
+                    current_task_features = []
+                    if is_already_labeled:
+                        # Look for existing features for this task
+                        existing_row = st.session_state.labeled_data[
+                            st.session_state.labeled_data['original_index'] == current_id
+                        ]
+                        if not existing_row.empty:
+                            task_col_name = f"{task_info['name']}_features"
+                            if task_col_name in existing_row.columns:
+                                existing_features_str = existing_row.iloc[0][task_col_name]
+                                # Handle NaN values from pandas
+                                if pd.isna(existing_features_str) or existing_features_str is None:
+                                    current_task_features = []
+                                elif existing_features_str:
+                                    current_task_features = [f.strip() for f in existing_features_str.split(',') if f.strip()]
+                                else:
+                                    current_task_features = []
+                    
+                    # Create checkboxes for this feature task
+                    selected_task_features = []
+                    for feature in task_info['labels']:
+                        feature_key = f"feature_{current_id}_{task_key}_{feature}"
+                        
+                        # Initialize session state if not exists
+                        if feature_key not in st.session_state:
+                            st.session_state[feature_key] = feature in current_task_features
+                        
+                        if st.checkbox(
+                            feature,
+                            key=feature_key
+                        ):
+                            selected_task_features.append(feature)
+                    
+                    feature_choices[task_key] = selected_task_features
+                    col_idx += 1
+    
+    # Save current labels button
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.session_state.feature_labels:
-            st.markdown("**Features (pick zero or more):**")
+        if st.button("💾 Save Current Labels", type="primary", use_container_width=True):
+            current_id = st.session_state.current_index
+            current_row = get_current_row()
             
-            # Create checkboxes for features
-            selected_features = []
-            for feature in st.session_state.feature_labels:
-                if st.checkbox(
-                    feature,
-                    value=feature in current_features,
-                    key=f"feature_{feature}_{current_id}"
-                ):
-                    selected_features.append(feature)
+            if current_row is not None:
+                # Collect current widget values from config-driven tasks only
+                classification_choices = {}
+                feature_choices = {}
+                
+                # Collect classification choices
+                if st.session_state.classification_tasks:
+                    for task_key, task_info in st.session_state.classification_tasks.items():
+                        widget_key = f"classification_{current_id}_{task_key}"
+                        if widget_key in st.session_state:
+                            choice = st.session_state[widget_key]
+                            if choice and choice != "None":
+                                classification_choices[task_key] = choice
+                            else:
+                                classification_choices[task_key] = None
+                
+                # Collect feature choices
+                if st.session_state.feature_tasks:
+                    for task_key, task_info in st.session_state.feature_tasks.items():
+                        selected_features = []
+                        for feature in task_info['labels']:
+                            feature_key = f"feature_{current_id}_{task_key}_{feature}"
+                            if feature_key in st.session_state and st.session_state[feature_key]:
+                                selected_features.append(feature)
+                        feature_choices[task_key] = selected_features
+                
+                # Save the labels (config-driven tasks only)
+                save_labeled_row_multi_task(current_row, classification_choices, feature_choices, [])
+                st.success("✅ Labels saved!")
+                st.rerun()
+
+    # Navigation controls
+    col1, col2, col3 = st.columns([1, 2, 1])
     
-    # Save label button
-    if st.button("💾 Save Label", type="primary", use_container_width=True):
-        # Lock labeling configuration on first save
-        if not st.session_state.labeling_locked:
-            st.session_state.labeling_locked = True
-        
-        # Remove existing label if it exists
-        if is_already_labeled:
-            st.session_state.labeled_data = st.session_state.labeled_data[
-                st.session_state.labeled_data['original_index'] != current_id
-            ].reset_index(drop=True)
-        
-        # Save new label
-        classification = classification_choice if 'classification_choice' in locals() else None
-        features = selected_features if 'selected_features' in locals() else []
-        
-        if classification or features:
-            save_labeled_row(current_row, classification, features)
-            st.success("✅ Label saved!")
-            
-            # Show auto-save status
-            if st.session_state.auto_save_counter % 5 == 0:
-                st.info("🔄 Auto-saved to file!")
-            else:
-                remaining = 5 - (st.session_state.auto_save_counter % 5)
-                st.info(f"📊 {remaining} more labels until auto-save")
-            
+    with col1:
+        if st.button("⬅️ Previous", disabled=st.session_state.current_index <= 0, key="nav_previous"):
+            # Save current state before navigation (like original app)
+            save_current_selections()
+            st.session_state.current_index -= 1
             st.rerun()
-        else:
-            st.warning("⚠️ Please select at least one classification or feature before saving")
     
-    # Show current progress
-    labeled_count = len(st.session_state.labeled_data)
-    st.markdown(f"**Progress:** {labeled_count:,}/{st.session_state.total_rows:,} items labeled ({labeled_count/st.session_state.total_rows*100:.1f}%)")
+    with col2:
+        st.markdown(f"<div style='text-align: center;'><h3>Item {st.session_state.current_index + 1:,} of {st.session_state.total_rows:,}</h3></div>", unsafe_allow_html=True)
     
-    # Show auto-save status
-    if hasattr(st.session_state, 'auto_save_counter'):
-        remaining = 5 - (st.session_state.auto_save_counter % 5)
-        if remaining == 5:
-            st.sidebar.success("💾 **Auto-save:** Just saved!")
-        else:
-            st.sidebar.info(f"🔄 **Auto-save:** {remaining} more until next save")
+    with col3:
+        if st.button("Next ➡️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_next"):
+            # Save current state before navigation (like original app)
+            save_current_selections()
+            st.session_state.current_index += 1
+            st.rerun()
+
+    # Progress bar
+    progress = (st.session_state.current_index + 1) / st.session_state.total_rows
     
     # Quick navigation
     st.subheader("🔍 Quick Navigation")
@@ -843,32 +1001,33 @@ else:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("🏠 Go to Start"):
-            save_current_label_if_exists()
+        if st.button("🏠 Go to Start", key="nav_start"):
+            save_current_selections()
             st.session_state.current_index = 0
             st.rerun()
     
     with col2:
-        if st.button("🎯 Go to End"):
-            save_current_label_if_exists()
+        if st.button("🎯 Go to End", key="nav_end"):
+            save_current_selections()
             st.session_state.current_index = st.session_state.total_rows - 1
+            st.rerun()
             st.rerun()
     
     with col3:
-        # Find next unlabeled item
+        # Find next unlabeled item (where not all classification tasks are labeled)
         if not st.session_state.labeled_data.empty:
-            labeled_indices = set(st.session_state.labeled_data['original_index'].values)
-            unlabeled_indices = [i for i in range(st.session_state.total_rows) if i not in labeled_indices]
+            # Get all items that are not fully labeled (missing classification labels)
+            unlabeled_indices = [i for i in range(st.session_state.total_rows) if not is_item_fully_labeled(i)]
             
             if unlabeled_indices:
                 next_unlabeled = min([i for i in unlabeled_indices if i > st.session_state.current_index], default=min(unlabeled_indices))
-                if st.button(f"➡️ Next Unlabeled ({next_unlabeled + 1:,})"):
-                    save_current_label_if_exists()
+                if st.button(f"➡️ Next Unlabeled ({next_unlabeled + 1:,})", key="nav_next_unlabeled"):
+                    save_current_selections()
                     st.session_state.current_index = next_unlabeled
                     st.rerun()
         else:
-            if st.button("➡️ Next Unlabeled"):
-                save_current_label_if_exists()
+            if st.button("➡️ Next Unlabeled", key="nav_next_unlabeled_fallback"):
+                save_current_selections()
                 st.session_state.current_index = min(st.session_state.current_index + 1, st.session_state.total_rows - 1)
                 st.rerun()
     
@@ -880,34 +1039,7 @@ else:
         value=st.session_state.current_index + 1
     )
     
-    if st.button("🔄 Jump"):
-        save_current_label_if_exists()
+    if st.button("🔄 Jump", key="nav_jump"):
+        save_current_selections()
         st.session_state.current_index = jump_to - 1
         st.rerun()
-    
-    # Export section
-    if not st.session_state.labeled_data.empty:
-        st.subheader("📊 Labeling Summary")
-        
-        # Show summary statistics
-        if 'label_classification' in st.session_state.labeled_data.columns:
-            classification_counts = st.session_state.labeled_data['label_classification'].value_counts()
-            if not classification_counts.empty:
-                st.write("**Classification distribution:**")
-                for label, count in classification_counts.items():
-                    if label:  # Skip empty labels
-                        st.write(f"- {label}: {count}")
-        
-        if 'label_features' in st.session_state.labeled_data.columns:
-            # Parse feature counts
-            feature_counts = {}
-            for features_str in st.session_state.labeled_data['label_features'].dropna():
-                if features_str:
-                    features = [f.strip() for f in features_str.split(',') if f.strip()]
-                    for feature in features:
-                        feature_counts[feature] = feature_counts.get(feature, 0) + 1
-            
-            if feature_counts:
-                st.write("**Feature distribution:**")
-                for feature, count in sorted(feature_counts.items()):
-                    st.write(f"- {feature}: {count}")
