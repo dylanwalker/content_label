@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pyarrow.feather as feather
 import configparser
+import shutil
 
 def load_config(config_file):
     """Load configuration from file"""
@@ -117,8 +118,6 @@ if 'feature_labels' not in st.session_state:
     st.session_state.feature_labels = []
 if 'feature_tasks' not in st.session_state:
     st.session_state.feature_tasks = {}
-if 'labeling_locked' not in st.session_state:
-    st.session_state.labeling_locked = False
 if 'auto_save_counter' not in st.session_state:
     st.session_state.auto_save_counter = 0
 if 'dark_mode' not in st.session_state:
@@ -191,6 +190,15 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                         col_name = f"{task_info['name']}_features"
                         if col_name not in st.session_state.data.columns:
                             st.session_state.data[col_name] = ""
+                    
+                    # Auto-load previously saved labeled data if it exists
+                    labeled_file = "tv_content_labeled.feather"
+                    if os.path.exists(labeled_file):
+                        try:
+                            st.session_state.labeled_data = pd.read_feather(labeled_file)
+                        except Exception:
+                            # If loading fails, continue with empty labeled_data
+                            pass
                             
             except Exception as e:
                 # Don't show error on startup, just continue without auto-loading
@@ -276,7 +284,7 @@ def save_labeled_row(row_data: pd.Series, classification: str, features: List[st
     # Increment auto-save counter and check for auto-save
     st.session_state.auto_save_counter += 1
     if st.session_state.auto_save_counter % 5 == 0:
-        auto_save_to_feather()
+        save_to_feather()
 
 def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dict, feature_choices: Dict = None, features: List[str] = None):
     """Save a labeled row with multiple classification tasks and feature tasks to the labeled_data dataframe."""
@@ -335,17 +343,23 @@ def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dic
     # Increment auto-save counter and check for auto-save
     st.session_state.auto_save_counter += 1
     if st.session_state.auto_save_counter % 5 == 0:
-        auto_save_to_feather()
+        save_to_feather()
 
-def auto_save_to_feather():
-    """Auto-save labeled data to feather file every 5 labels."""
+def save_to_feather():
+    """Save labeled data to main feather file, and backup previous version."""
     if not st.session_state.labeled_data.empty:
         try:
-            filename = "tv_content_labeled_autosave.feather"
-            st.session_state.labeled_data.to_feather(filename)
-            st.toast(f"🔄 Auto-saved {len(st.session_state.labeled_data)} labels to {filename}", icon="💾")
+            main_filename = "tv_content_labeled.feather"
+            backup_filename = "tv_content_labeled.bak.feather"
+            # If main file exists, copy to backup
+            if os.path.exists(main_filename):
+                shutil.copy2(main_filename, backup_filename)
+            # Save current labeled data to main file
+            st.session_state.labeled_data.to_feather(main_filename)
+            return main_filename
         except Exception as e:
-            st.toast(f"Auto-save failed: {str(e)}", icon="⚠️")
+            return None
+    return None
 
 def is_item_fully_labeled(original_index):
     """Check if an item has all required classification tasks labeled (not None)."""
@@ -444,9 +458,6 @@ def save_current_label_if_exists():
         
         # Save if there are any selections
         if classification or features:
-            # Lock labeling configuration on first save
-            if not st.session_state.labeling_locked:
-                st.session_state.labeling_locked = True
             
             # Remove existing label if it exists
             is_already_labeled = current_id in st.session_state.labeled_data['original_index'].values if not st.session_state.labeled_data.empty else False
@@ -460,17 +471,7 @@ def save_current_label_if_exists():
             if current_row is not None:
                 save_labeled_row(current_row, classification, features)
 
-def save_labeled_data_to_feather():
-    """Save labeled data to a feather file."""
-    if not st.session_state.labeled_data.empty:
-        try:
-            filename = "tv_content_labeled.feather"
-            st.session_state.labeled_data.to_feather(filename)
-            return filename
-        except Exception as e:
-            st.error(f"Error saving to feather: {str(e)}")
-            return None
-    return None
+    # ...function removed, use save_to_feather instead...
 
 def load_data_file(file_path: str):
     """Load a data file, automatically choosing chunked or memory mode based on file size."""
@@ -510,9 +511,6 @@ def load_labeled_data_from_feather(file_path: str):
     try:
         st.session_state.labeled_data = pd.read_feather(file_path)
         
-        # Lock labeling if we loaded data
-        if not st.session_state.labeled_data.empty:
-            st.session_state.labeling_locked = True
         
         st.success(f"Loaded {len(st.session_state.labeled_data)} previously labeled items!")
     except Exception as e:
@@ -670,44 +668,57 @@ if highlight_words_input:
         if word.strip()
     ]
 
-# Main content area
-st.title("📺 TV Content Labeling Tool")
-
-# Save functionality in main window
+# Save & Download Section
 if not st.session_state.labeled_data.empty:
-    col1, col2, col3 = st.columns([2, 1, 1])
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💾 Save & Export")
     
-    with col1:
-        # Auto-save on navigation
-        if st.button("💾 Save Progress", type="primary", use_container_width=True):
-            filename = save_labeled_data_to_feather()
-            if filename:
-                st.success(f"✅ Saved {len(st.session_state.labeled_data)} labels to {filename}")
-    
-    with col2:
-        # Download button that automatically saves first
-        if not st.session_state.labeled_data.empty:
-            # Save to file for download
-            filename = save_labeled_data_to_feather()
-            if filename and os.path.exists(filename):
-                with open(filename, "rb") as file:
-                    st.download_button(
-                        label="📥 Download File",
-                        data=file.read(),
-                        file_name="tv_content_labeled.feather",
-                        mime="application/octet-stream",
-                        use_container_width=True
-                    )
-            else:
-                st.button("📥 Download File", disabled=True, use_container_width=True, help="Error creating file")
+    # Save button
+    if st.sidebar.button("💾 Save Progress", type="primary", use_container_width=True):
+        filename = save_to_feather()
+        if filename:
+            st.sidebar.success(f"✅ Saved {len(st.session_state.labeled_data)} labels")
         else:
-            st.button("📥 Download File", disabled=True, use_container_width=True, help="No labels to download")
+            st.sidebar.error("❌ Save failed.")
     
-    with col3:
-        # Auto-save status placeholder
-        pass
+    # Download button
+    filename = "tv_content_labeled.feather"
+    if os.path.exists(filename):
+        with open(filename, "rb") as file:
+            st.sidebar.download_button(
+                label="📥 Download Results",
+                data=file.read(),
+                file_name="tv_content_labeled.feather",
+                mime="application/octet-stream",
+                use_container_width=True,
+                help="Download your labeled data as a feather file"
+            )
+    else:
+        st.sidebar.button("📥 Download Results", disabled=True, use_container_width=True, help="Save progress first to enable download")
     
-    st.markdown("---")
+    # Show progress info
+    st.sidebar.caption(f"📊 {len(st.session_state.labeled_data)} labels saved")
+
+# Main content area
+# Reduce top padding with custom CSS
+st.markdown("""
+<style>
+    .main .block-container {
+        padding-top: 0.5rem;
+        padding-bottom: 1rem;
+    }
+    .small-button {
+        font-size: 0.75rem !important;
+        padding: 0.2rem 0.4rem !important;
+        height: 2rem !important;
+    }
+    .compact-section {
+        margin-bottom: 0.5rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<h1 style="margin-top: 0; margin-bottom: 1rem;">📺 TV Content Labeling Tool</h1>', unsafe_allow_html=True)
 
 if st.session_state.data is None:
     st.info("� No data loaded. Please select a .feather file above or upload a config file with data path.")
@@ -803,18 +814,12 @@ else:
     # Display text content
     st.subheader("📄 Content")
     
-    # Show original vs beautified toggle
-    show_original = st.checkbox("Show original formatting", value=False)
-    
-    if show_original:
-        st.markdown("**Original text:**")
-        st.text_area("", value=current_text, height=200, disabled=True, key="original_text")
-    else:
-        st.markdown("**Formatted text:**")
-        bg_color = st.get_option('theme.backgroundColor')
-        border_color = st.get_option('theme.borderColor')
-        text_color = st.get_option('theme.textColor')        
-        st.markdown(f'<div style="border: 1px solid {border_color}; padding: 15px; border-radius: 5px; background-color: {bg_color}; line-height: 1.6; color: {text_color};">{highlighted_text}</div>', unsafe_allow_html=True)
+    # Show formatted text only (removed toggle)
+    st.markdown("**Formatted text:**")
+    bg_color = st.get_option('theme.backgroundColor')
+    border_color = st.get_option('theme.borderColor')
+    text_color = st.get_option('theme.textColor')        
+    st.markdown(f'<div style="border: 1px solid {border_color}; padding: 15px; border-radius: 5px; background-color: {bg_color}; line-height: 1.6; color: {text_color}; height: 200px; overflow-y: auto; white-space: pre-wrap;">{highlighted_text}</div>', unsafe_allow_html=True)
     
     # Show additional column data if selected
     if len(st.session_state.selected_columns) > 1:
@@ -823,6 +828,67 @@ else:
                 if col != st.session_state.text_column and col in current_row:
                     st.write(f"**{col}:** {current_row[col]}")
     
+    # Compact centered navigation
+    _, col_nav, _ = st.columns([1, 2, 1])
+    
+    with col_nav:
+        # All navigation in a single compact row
+        nav_cols = st.columns([1, 1, 2, 1, 1, 1, 1.5, 1])
+        
+        with nav_cols[0]:
+            if st.button("⏮️", disabled=st.session_state.current_index <= 0, key="nav_start", help="First"):
+                save_current_selections()
+                st.session_state.current_index = 0
+                st.rerun()
+        
+        with nav_cols[1]:
+            if st.button("◀️", disabled=st.session_state.current_index <= 0, key="nav_previous", help="Previous"):
+                save_current_selections()
+                st.session_state.current_index -= 1
+                st.rerun()
+        
+        with nav_cols[2]:
+            st.markdown(f"<div style='text-align: center; line-height: 2.3; font-weight: bold;'>{st.session_state.current_index + 1:,} / {st.session_state.total_rows:,}</div>", unsafe_allow_html=True)
+        
+        with nav_cols[3]:
+            if st.button("▶️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_next", help="Next"):
+                save_current_selections()
+                st.session_state.current_index += 1
+                st.rerun()
+        
+        with nav_cols[4]:
+            if st.button("⏭️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_end", help="Last"):
+                save_current_selections()
+                st.session_state.current_index = st.session_state.total_rows - 1
+                st.rerun()
+        
+        with nav_cols[5]:
+            # Find next unlabeled item
+            if not st.session_state.labeled_data.empty:
+                unlabeled_indices = [i for i in range(st.session_state.total_rows) if not is_item_fully_labeled(i)]
+                if unlabeled_indices:
+                    next_unlabeled = min([i for i in unlabeled_indices if i > st.session_state.current_index], default=min(unlabeled_indices))
+                    if st.button("🔍", key="nav_next_unlabeled", help="Next Unlabeled"):
+                        save_current_selections()
+                        st.session_state.current_index = next_unlabeled
+                        st.rerun()
+                else:
+                    st.button("✅", disabled=True, key="nav_all_labeled", help="All Labeled")
+            else:
+                if st.button("🔍", key="nav_next_unlabeled_fallback", help="Next Unlabeled"):
+                    save_current_selections()
+                    st.session_state.current_index = min(st.session_state.current_index + 1, st.session_state.total_rows - 1)
+                    st.rerun()
+        
+        with nav_cols[6]:
+            jump_to = st.number_input("Jump", min_value=1, max_value=st.session_state.total_rows, value=st.session_state.current_index + 1, key="jump_input", label_visibility="collapsed")
+        
+        with nav_cols[7]:
+            if st.button("🎯", key="nav_jump", help="Jump to item"):
+                save_current_selections()
+                st.session_state.current_index = jump_to - 1
+                st.rerun()
+
     # Labeling section
     st.subheader("🏷️ Labels")
     
@@ -932,114 +998,3 @@ else:
                     
                     feature_choices[task_key] = selected_task_features
                     col_idx += 1
-    
-    # Save current labels button
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        if st.button("💾 Save Current Labels", type="primary", use_container_width=True):
-            current_id = st.session_state.current_index
-            current_row = get_current_row()
-            
-            if current_row is not None:
-                # Collect current widget values from config-driven tasks only
-                classification_choices = {}
-                feature_choices = {}
-                
-                # Collect classification choices
-                if st.session_state.classification_tasks:
-                    for task_key, task_info in st.session_state.classification_tasks.items():
-                        widget_key = f"classification_{current_id}_{task_key}"
-                        if widget_key in st.session_state:
-                            choice = st.session_state[widget_key]
-                            if choice and choice != "None":
-                                classification_choices[task_key] = choice
-                            else:
-                                classification_choices[task_key] = None
-                
-                # Collect feature choices
-                if st.session_state.feature_tasks:
-                    for task_key, task_info in st.session_state.feature_tasks.items():
-                        selected_features = []
-                        for feature in task_info['labels']:
-                            feature_key = f"feature_{current_id}_{task_key}_{feature}"
-                            if feature_key in st.session_state and st.session_state[feature_key]:
-                                selected_features.append(feature)
-                        feature_choices[task_key] = selected_features
-                
-                # Save the labels (config-driven tasks only)
-                save_labeled_row_multi_task(current_row, classification_choices, feature_choices, [])
-                st.success("✅ Labels saved!")
-                st.rerun()
-
-    # Navigation controls
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        if st.button("⬅️ Previous", disabled=st.session_state.current_index <= 0, key="nav_previous"):
-            # Save current state before navigation (like original app)
-            save_current_selections()
-            st.session_state.current_index -= 1
-            st.rerun()
-    
-    with col2:
-        st.markdown(f"<div style='text-align: center;'><h3>Item {st.session_state.current_index + 1:,} of {st.session_state.total_rows:,}</h3></div>", unsafe_allow_html=True)
-    
-    with col3:
-        if st.button("Next ➡️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_next"):
-            # Save current state before navigation (like original app)
-            save_current_selections()
-            st.session_state.current_index += 1
-            st.rerun()
-
-    # Progress bar
-    progress = (st.session_state.current_index + 1) / st.session_state.total_rows
-    
-    # Quick navigation
-    st.subheader("🔍 Quick Navigation")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🏠 Go to Start", key="nav_start"):
-            save_current_selections()
-            st.session_state.current_index = 0
-            st.rerun()
-    
-    with col2:
-        if st.button("🎯 Go to End", key="nav_end"):
-            save_current_selections()
-            st.session_state.current_index = st.session_state.total_rows - 1
-            st.rerun()
-            st.rerun()
-    
-    with col3:
-        # Find next unlabeled item (where not all classification tasks are labeled)
-        if not st.session_state.labeled_data.empty:
-            # Get all items that are not fully labeled (missing classification labels)
-            unlabeled_indices = [i for i in range(st.session_state.total_rows) if not is_item_fully_labeled(i)]
-            
-            if unlabeled_indices:
-                next_unlabeled = min([i for i in unlabeled_indices if i > st.session_state.current_index], default=min(unlabeled_indices))
-                if st.button(f"➡️ Next Unlabeled ({next_unlabeled + 1:,})", key="nav_next_unlabeled"):
-                    save_current_selections()
-                    st.session_state.current_index = next_unlabeled
-                    st.rerun()
-        else:
-            if st.button("➡️ Next Unlabeled", key="nav_next_unlabeled_fallback"):
-                save_current_selections()
-                st.session_state.current_index = min(st.session_state.current_index + 1, st.session_state.total_rows - 1)
-                st.rerun()
-    
-    # Jump to specific item
-    jump_to = st.number_input(
-        "Jump to item:",
-        min_value=1,
-        max_value=st.session_state.total_rows,
-        value=st.session_state.current_index + 1
-    )
-    
-    if st.button("🔄 Jump", key="nav_jump"):
-        save_current_selections()
-        st.session_state.current_index = jump_to - 1
-        st.rerun()
