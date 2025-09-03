@@ -120,8 +120,6 @@ if 'feature_tasks' not in st.session_state:
     st.session_state.feature_tasks = {}
 if 'auto_save_counter' not in st.session_state:
     st.session_state.auto_save_counter = 0
-if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False
 
 # Load default configuration on startup
 if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
@@ -668,6 +666,20 @@ if highlight_words_input:
         if word.strip()
     ]
 
+# App Theme Selection
+st.sidebar.subheader("🎨 App Theme")
+with st.sidebar.expander("Theme Settings Help"):
+    st.markdown("""
+    **Theme Control**: Use Streamlit's built-in theme settings:
+    1. Click the **☰** hamburger menu (top right)
+    2. Go to **Settings** → **Theme**
+    3. Choose: **Light**, **Dark**, or **Auto**
+
+    *Auto mode follows your system preference*
+    
+    💡 **Tip**: You can also add `?theme=dark` or `?theme=light` to the URL
+    """)
+
 # Save & Download Section
 if not st.session_state.labeled_data.empty:
     st.sidebar.markdown("---")
@@ -811,15 +823,23 @@ else:
     beautified_text = beautify_text(current_text)
     highlighted_text = highlight_text(beautified_text, st.session_state.highlight_words, highlight_color)
     
-    # Display text content
-    st.subheader("📄 Content")
     
     # Show formatted text only (removed toggle)
     st.markdown("**Formatted text:**")
-    bg_color = st.get_option('theme.backgroundColor')
-    border_color = st.get_option('theme.borderColor')
-    text_color = st.get_option('theme.textColor')        
-    st.markdown(f'<div style="border: 1px solid {border_color}; padding: 15px; border-radius: 5px; background-color: {bg_color}; line-height: 1.6; color: {text_color}; height: 200px; overflow-y: auto; white-space: pre-wrap;">{highlighted_text}</div>', unsafe_allow_html=True)
+    
+    # Use Streamlit's container with larger height to minimize scrolling
+    # Use st.text() to avoid markdown interpretation
+    with st.container(height=300, border=True):
+        if st.session_state.highlight_words:
+            # For highlighting, we need to use markdown but escape it first
+            import html
+            escaped_text = html.escape(beautified_text)
+            # Re-apply highlighting to escaped text
+            highlighted_escaped_text = highlight_text(escaped_text, st.session_state.highlight_words, highlight_color)
+            st.markdown(highlighted_escaped_text, unsafe_allow_html=True)
+        else:
+            # No highlighting needed, use plain text to avoid markdown interpretation
+            st.text(beautified_text)
     
     # Show additional column data if selected
     if len(st.session_state.selected_columns) > 1:
