@@ -1,168 +1,216 @@
-# TV Content Labeling Tool
+# Content Labeling Tool
 
-A Streamlit application for labeling and annotating TV content data with advanced text processing, visualization features, and **multi-user authentication**.
+A secure, multi-user Streamlit application for labeling and annotating data with Google OAuth authentication, configurable classification tasks, and user-specific data isolation.
 
 ## Features
 
-- **🔐 User Authentication**: Secure login system with user-specific data isolation
-- **👥 Multi-User Support**: Each user gets their own labeled data files
-- **Flexible Data Loading**: 
-  - Load large feather files (several GB) directly from local disk paths
-  - Upload smaller files (< 200MB) through the web interface
-  - Chunked loading for memory-efficient processing of large datasets
-- **Column Selection**: Choose which columns from the original data to save with labels
-- **Text Beautification**: Automatically clean text by removing newlines and extra whitespace
-- **Word Highlighting**: Highlight user-defined keywords with custom colors and bold formatting
-- **Dual Labeling System**:
-  - **Classification**: Pick one label from multiple options (e.g., genre, sentiment)
-  - **Feature Labeling**: Pick zero or more features (e.g., topics, characteristics)
-- **Navigation**: Easy navigation between items with progress tracking
-- **Label Management**: Save and load labeling progress as feather files
-- **Export**: Download labeled data as CSV or save progress as feather files
-- **Performance Optimized**: Handles large datasets with memory usage monitoring
-- **Dark Mode**: Toggle between light and dark themes for comfortable viewing
+- **🔐 Google OAuth Authentication**: Secure login with user-specific data isolation
+- **👥 Multi-User Support**: Each authenticated user gets their own labeled data files
+- **⚙️ Configuration-Driven**: Flexible setup through `.cfg` files
+- **📊 Multi-Task Classification**: Support for multiple classification and feature labeling tasks
+- **🎨 Text Highlighting**: Configurable keyword highlighting with custom colors
+- **💾 Auto-Save**: Automatic progress saving every 5 labels with backup files
+- **📁 Large File Support**: Handle multi-GB feather files with chunked loading
+- **🔍 Smart Navigation**: Jump to unlabeled items, progress tracking
+- **📤 Export Options**: Download results as feather files with configurable columns
 
-## Quick Start
+## Quick Setup Guide
 
-1. **Install dependencies**:
+### 1. Clone the Repository
+```bash
+git clone https://github.com/yourusername/content_label.git
+cd content_label
+```
+
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-2. **Run the app**:
+### 3. Set Up Google OAuth Authentication
+
+#### Create Google OAuth Project:
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable the **Google+ API** or **Google Identity API**
+4. Go to **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+5. Set application type to **Web application**
+6. Add authorized redirect URIs:
+   - For local development: `http://localhost:8501`
+   - For Streamlit Cloud: `https://your-app-name.streamlit.app`
+
+#### Configure Authentication:
+Create a `secrets.toml` file in the project root:
+```toml
+[oauth.google]
+client_id = "your-google-client-id.googleusercontent.com"
+client_secret = "your-google-client-secret"
+redirect_uri = "http://localhost:8501"  # or your deployed URL
+
+[oauth]
+cookie_secret = "your-random-string-for-cookie-encryption"
+```
+
+#### Add Approved Users:
+- In Google Cloud Console, go to **OAuth consent screen**
+- Add test users (their email addresses) who should have access
+- For production, submit for verification or keep in testing mode
+
+### 4. Prepare Your Data
+- Convert your data to `.feather` format (Apache Arrow)
+- Place the file in the project directory or note its full path
+- Ensure your data has the columns you want to label
+
+### 5. Configure the Application
+
+Edit `default.cfg` to match your labeling needs:
+
+```ini
+[data]
+# Path to your data file
+file_path = your_data.feather
+# Column containing text to be labeled
+text_column = content
+
+[output]
+# Base filename for user-specific labeled data
+output_base_filename = labeled_data.feather
+# Columns to include in output (comma-separated)
+output_columns = datetime,text,embedding,metadata
+
+[highlighting]
+# Highlight color (hex code)
+color = #ece800
+# Words to highlight (comma-separated)
+words = keyword1,keyword2,important,urgent
+
+[classification_tasks]
+# Define multiple classification tasks
+task1_name = Content Type
+task1_labels = News, Sports, Entertainment, Weather
+
+task2_name = Urgency Level  
+task2_labels = Low, Medium, High, Critical
+
+[feature_tasks]
+# Define feature labeling tasks (multi-select)
+task1_name = Content Features
+task1_labels = Breaking News, Live Coverage, Expert Interview, Analysis
+```
+
+### 6. Run the Application
+
+**Local Development:**
 ```bash
 streamlit run app.py
 ```
 
-3. **Log in with test accounts**:
-   - Username: `admin`, Password: `admin123`
-   - Username: `user1`, Password: `user123`
-   - Username: `labeler`, Password: `label123`
+**Deploy to Streamlit Cloud:**
+1. Push your repository to GitHub
+2. Connect to [Streamlit Cloud](https://streamlit.io/cloud)
+3. Add your `secrets.toml` content to the Streamlit Cloud secrets
+4. Deploy your app
 
-4. **Start labeling!** Each user gets their own data files.
+## Configuration Reference
 
-## Authentication System
+### `[data]` Section
+- `file_path`: Path to your feather data file
+- `text_column`: Column name containing text content to label
 
-The app includes a **secure authentication system** that provides:
+### `[output]` Section  
+- `output_base_filename`: Base name for output files (users get `user_hash_filename`)
+- `output_columns`: Columns from input data to include in labeled output
 
-- ✅ **Secure password hashing** (SHA256)
-- ✅ **Session-based authentication**
-- ✅ **User-specific file storage** (prevents data conflicts)
-- ✅ **Clean login/logout interface**
-- ✅ **Production-ready** (no external dependencies)
+### `[highlighting]` Section
+- `color`: Hex color code for highlighted text (#rrggbb)
+- `words`: Comma-separated list of words to highlight in text
 
-### Test Accounts
+### `[classification_tasks]` Section
+Multiple classification tasks where users pick **one** option:
+```ini
+task1_name = Task Display Name
+task1_labels = Option1, Option2, Option3
 
-| Username | Password | Role |
-|----------|----------|------|
-| `admin` | `admin123` | Administrator |
-| `user1` | `user123` | Test User |
-| `labeler` | `label123` | Content Labeler |
+task2_name = Another Task
+task2_labels = Choice A, Choice B, Choice C
+```
 
-### User Data Isolation
+### `[feature_tasks]` Section  
+Multiple feature tasks where users can pick **zero or more** options:
+```ini
+task1_name = Feature Set Name
+task1_labels = Feature1, Feature2, Feature3
 
-Each user's work is automatically saved to separate files:
-- `admin_tv_content_labeled.feather`
-- `user1_tv_content_labeled.feather`
-- `labeler_tv_content_labeled.feather`
+task2_name = Another Feature Set
+task2_labels = Attribute A, Attribute B, Attribute C
+```
 
-For more details, see [AUTHENTICATION.md](AUTHENTICATION.md).
+## User Workflow
 
-## Usage
+### For Labelers:
+1. **Login**: Use approved Google account to access the tool
+2. **Auto-Load**: Data and configuration load automatically from `default.cfg`
+3. **Navigate**: Use Previous/Next buttons or jump to specific items
+4. **Label**: Select classifications and features for each item
+5. **Auto-Save**: Progress saves automatically every 5 labels
+6. **Download**: Export your labeled data when complete
 
-### 1. Load Data
-
-**For Large Files (recommended for GB files):**
-- Copy the full path to your feather file:
-  - **Windows**: Right-click file → "Copy as path" or Shift+Right-click → "Copy as path"  
-  - **File Explorer**: Copy from the address bar
-- Paste the path in the "Enter file path" field in the sidebar
-- Click "📁 Load File" button
-
-**For Small Files (< 200MB):**
-- Click "Upload feather file" in the sidebar
-- Select a feather file from the file browser
-
-### 2. Select Columns
-- Choose the column containing the text content to label from the dropdown
-- Select which columns from the original data to include in the labeled dataset
-
-### 3. Configure Highlighting
-- Add words you want to highlight (one per line)
-- Choose a highlight color
-- Words will appear bold and colored in the text display
-
-### 4. Set Up Labels
-- **Classification Labels**: Define mutually exclusive categories (pick one)
-- **Feature Labels**: Define features that can be combined (pick zero or more)
-
-### 5. Start Labeling
-- Navigate through items using Previous/Next buttons
-- View beautified text with highlighted keywords
-- Apply classification and feature labels
-- Track progress with the progress bar
-
-### 6. Export Results
-- Download labeled data as CSV
-- Save/load labeling progress as feather files
-- View labeling statistics and distribution
-
-## Sample Data
-
-A sample feather file (`sample_data.feather`) is included to test the application. It contains TV content examples with different types of content (news, cooking, sports, weather).
+### For Administrators:
+1. **Setup**: Configure `default.cfg` with your labeling tasks
+2. **Deploy**: Host on Streamlit Cloud with proper authentication
+3. **Manage**: Add/remove users through Google OAuth console
+4. **Monitor**: Each user's data is saved separately as `user_hash_filename.feather`
 
 ## File Structure
 
 ```
-tv_label/
-├── app.py                    # Main Streamlit application
-├── requirements.txt          # Python dependencies
-├── sample_data.feather       # Sample data for testing
-└── readme.md                # This file
+content_label/
+├── app.py                           # Main application
+├── default.cfg                      # Configuration file
+├── secrets.toml                     # OAuth secrets (local only)
+├── requirements.txt                 # Python dependencies
+├── sample_data.feather             # Sample data
+├── user_hash1_labeled_data.feather # User 1's labeled data
+├── user_hash2_labeled_data.feather # User 2's labeled data
+└── readme.md                       # This documentation
 ```
 
-## Configuration Examples
+## Security Features
 
-### Classification Labels (pick one):
-```
-News
-Sports
-Entertainment
-Weather
-Cooking
-Documentary
-```
+- **OAuth Authentication**: Only approved Google accounts can access
+- **User Isolation**: Each user's labeled data is completely separate
+- **Auto-Backup**: Backup files (`.bak.feather`) created on each save
+- **Session Management**: Secure session handling with encrypted cookies
 
-### Feature Labels (pick multiple):
-```
-Breaking News
-Live Coverage
-Expert Interview
-Data Visualization
-Audience Participation
-International Content
-```
+## Technical Notes
 
-### Highlight Words:
-```
-breaking
-live
-exclusive
-urgent
-update
-```
+- **Performance**: Handles multi-GB files through chunked loading
+- **Format**: Uses Apache Arrow feather format for fast I/O
+- **State Management**: Streamlit session state preserves work across navigation
+- **Responsive**: Works on desktop and tablet devices
+- **Multi-User**: Supports unlimited concurrent users with data isolation
 
-## Tips
+## Troubleshooting
 
-- Use the "Jump to Next Unlabeled" feature to efficiently label remaining items
-- Save your progress regularly using the "Save Progress" feature
-- Toggle between original and formatted text view to see the difference
-- Use the progress indicators to track your labeling completion
+**Authentication Issues:**
+- Verify `secrets.toml` has correct Google OAuth credentials
+- Ensure user email is added to OAuth consent screen
+- Check redirect URIs match your deployment URL
 
-## Technical Details
+**Data Loading Issues:**  
+- Confirm file path in `default.cfg` is correct and accessible
+- Ensure data file is in feather format
+- Check that specified `text_column` exists in your data
 
-- Built with Streamlit for the web interface
-- Uses Pandas for data manipulation
-- Implements regex-based text highlighting
-- Session state management for persistent labeling
-- Feather format for efficient data storage and retrieval
+**Configuration Issues:**
+- Validate `default.cfg` syntax (no spaces in section headers)
+- Ensure task numbers are sequential (task1, task2, task3...)
+- Check that specified `output_columns` exist in your data
+
+## Example Use Cases
+
+- **Content Moderation**: Label social media posts for policy violations
+- **Research Annotation**: Classify academic papers or articles  
+- **Media Analysis**: Tag TV/radio content for themes and topics
+- **Customer Feedback**: Categorize support tickets or reviews
+- **Document Processing**: Label legal documents or contracts

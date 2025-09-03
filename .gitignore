@@ -101,7 +101,7 @@ venv.bak/
 dmypy.json
 
 # User-specific labeled data files
-*_tv_content_labeled*.feather
+*labeled_data*.feather
 
 # Backup files
 *.bak

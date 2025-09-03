@@ -13,7 +13,7 @@ import hashlib
 
 def login_screen():
     """Display login screen using Streamlit's built-in authentication"""
-    st.header("🔐 TV Content Labeling Tool")
+    st.header("🔐 Content Labeling Tool")
     st.subheader("This app requires authentication.")
     st.write("Please log in with your Google account to access the labeling tool.")
     
@@ -38,7 +38,7 @@ def load_config(config_file):
     output_config = {}
     if 'output' in config:
         output_config = {
-            'filename': config['output'].get('output_filename', 'labeled_data.feather'),
+            'filename': config['output'].get('output_base_filename', 'labeled_data.feather'),
             'columns': [col.strip() for col in config['output'].get('output_columns', '').split(',') if col.strip()]
         }
     
@@ -88,8 +88,8 @@ def load_config(config_file):
 
 # Configure page
 st.set_page_config(
-    page_title="TV Content Labeling Tool",
-    page_icon="📺",
+    page_title="Content Labeling Tool",
+    page_icon="🏷️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -154,6 +154,12 @@ def get_user_filename(base_filename: str) -> str:
         name, ext = os.path.splitext(base_filename)
         return f"{username}_{name}{ext}"
     return base_filename
+
+def get_output_filename() -> str:
+    """Get the configured output filename, or default if not configured."""
+    if hasattr(st.session_state, 'output_config') and st.session_state.output_config and st.session_state.output_config.get('filename'):
+        return st.session_state.output_config['filename']
+    return "content_labeled.feather"  # Default fallback
 
 # Load default configuration on startup
 if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
@@ -224,7 +230,7 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                             st.session_state.data[col_name] = ""
                     
                     # Auto-load previously saved labeled data if it exists
-                    labeled_file = get_user_filename("tv_content_labeled.feather")
+                    labeled_file = get_user_filename(get_output_filename())
                     if os.path.exists(labeled_file):
                         try:
                             st.session_state.labeled_data = pd.read_feather(labeled_file)
@@ -290,41 +296,21 @@ def get_current_row():
     
     return None
 
-def save_labeled_row(row_data: pd.Series, classification: str, features: List[str]):
-    """Save a labeled row to the labeled_data dataframe."""
-    # Create new row with selected columns plus labels
-    new_row = {}
-    
-    # Add selected columns from original data
-    for col in st.session_state.selected_columns:
-        if col in row_data:
-            new_row[col] = row_data[col]
-    
-    # Add metadata
-    new_row['original_index'] = st.session_state.current_index
-    new_row['label_classification'] = classification if classification else ""
-    new_row['label_features'] = ', '.join(features) if features else ""
-    
-    # Convert to DataFrame and append
-    new_row_df = pd.DataFrame([new_row])
-    
-    if st.session_state.labeled_data.empty:
-        st.session_state.labeled_data = new_row_df
-    else:
-        st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df], ignore_index=True)
-    
-    # Increment auto-save counter and check for auto-save
-    st.session_state.auto_save_counter += 1
-    if st.session_state.auto_save_counter % 5 == 0:
-        save_to_feather()
-
 def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dict, feature_choices: Dict = None, features: List[str] = None):
     """Save a labeled row with multiple classification tasks and feature tasks to the labeled_data dataframe."""
     # Create new row with selected columns plus labels
     new_row = {}
     
-    # Add selected columns from original data
-    for col in st.session_state.selected_columns:
+    # Determine which columns to save - use output config if available, otherwise selected columns
+    columns_to_save = st.session_state.selected_columns
+    if hasattr(st.session_state, 'output_config') and st.session_state.output_config and st.session_state.output_config.get('columns'):
+        # Filter output columns to only include ones that exist in the current data
+        valid_output_columns = [col for col in st.session_state.output_config['columns'] if col in row_data.index]
+        if valid_output_columns:
+            columns_to_save = valid_output_columns
+    
+    # Add selected/configured columns from original data
+    for col in columns_to_save:
         if col in row_data:
             new_row[col] = row_data[col]
     
@@ -381,8 +367,12 @@ def save_to_feather():
     """Save labeled data to main feather file, and backup previous version."""
     if not st.session_state.labeled_data.empty:
         try:
-            main_filename = get_user_filename("tv_content_labeled.feather")
-            backup_filename = get_user_filename("tv_content_labeled.bak.feather")
+            base_filename = get_output_filename()
+            main_filename = get_user_filename(base_filename)
+            # Create backup filename by inserting .bak before extension
+            name, ext = os.path.splitext(base_filename)
+            backup_base = f"{name}.bak{ext}"
+            backup_filename = get_user_filename(backup_base)
             # If main file exists, copy to backup
             if os.path.exists(main_filename):
                 shutil.copy2(main_filename, backup_filename)
@@ -463,47 +453,6 @@ def save_current_selections():
     # Save if there are any selections
     if has_selections:
         save_labeled_row_multi_task(current_row, classification_choices, feature_choices, [])
-
-def save_current_label_if_exists():
-    """Save current label before navigation if user has made selections."""
-    # Check if we're on the labeling page and have classification/feature options
-    if (st.session_state.data is not None and 
-        st.session_state.selected_columns and
-        (st.session_state.classification_labels or st.session_state.feature_labels)):
-        
-        current_id = st.session_state.current_index
-        
-        # Get current selections from session state keys
-        classification = None
-        features = []
-        
-        # Look for classification selection
-        classification_key = f"classification_{current_id}"
-        if classification_key in st.session_state:
-            classification = st.session_state[classification_key]
-        
-        # Look for feature selections
-        for feature in st.session_state.feature_labels:
-            feature_key = f"feature_{feature}_{current_id}"
-            if feature_key in st.session_state and st.session_state[feature_key]:
-                features.append(feature)
-        
-        # Save if there are any selections
-        if classification or features:
-            
-            # Remove existing label if it exists
-            is_already_labeled = current_id in st.session_state.labeled_data['original_index'].values if not st.session_state.labeled_data.empty else False
-            if is_already_labeled:
-                st.session_state.labeled_data = st.session_state.labeled_data[
-                    st.session_state.labeled_data['original_index'] != current_id
-                ].reset_index(drop=True)
-            
-            # Get current row data and save
-            current_row = get_current_row()
-            if current_row is not None:
-                save_labeled_row(current_row, classification, features)
-
-    # ...function removed, use save_to_feather instead...
 
 def load_data_file(file_path: str):
     """Load a data file, automatically choosing chunked or memory mode based on file size."""
@@ -621,13 +570,13 @@ if not st.session_state.labeled_data.empty:
             st.sidebar.error("❌ Save failed.")
     
     # Download button
-    filename = get_user_filename("tv_content_labeled.feather")
+    filename = get_user_filename(get_output_filename())
     if os.path.exists(filename):
         with open(filename, "rb") as file:
             st.sidebar.download_button(
                 label="📥 Download Results",
                 data=file.read(),
-                file_name=get_user_filename("tv_content_labeled.feather"),
+                file_name=get_user_filename(get_output_filename()),
                 mime="application/octet-stream",
                 use_container_width=True,
                 help="Download your labeled data as a feather file"
@@ -781,7 +730,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<h1 style="margin-top: 0; margin-bottom: 1rem;">📺 TV Content Labeling Tool</h1>', unsafe_allow_html=True)
+st.markdown('<h1 style="margin-top: 0; margin-bottom: 1rem;">🏷️ Content Labeling Tool</h1>', unsafe_allow_html=True)
 
 if st.session_state.data is None:
     st.info("� No data loaded. Please select a .feather file above or upload a config file with data path.")
@@ -810,7 +759,7 @@ if st.session_state.data is None:
         
         ### 🔄 Auto-Save Features:
         - **Auto-save on navigation**: Labels are automatically saved when you navigate (Previous/Next/Jump)
-        - **Auto-save to file**: Every 5th label triggers an automatic save to `tv_content_labeled_autosave.feather`
+        - **Auto-save to file**: Every 5th label triggers an automatic save to your configured output file
         - **Auto-save**: Labels are automatically saved when you navigate to another item
         """)
     
