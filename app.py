@@ -9,6 +9,17 @@ from pathlib import Path
 import pyarrow.feather as feather
 import configparser
 import shutil
+import hashlib
+
+def login_screen():
+    """Display login screen using Streamlit's built-in authentication"""
+    st.header("🔐 TV Content Labeling Tool")
+    st.subheader("This app requires authentication.")
+    st.write("Please log in with your Google account to access the labeling tool.")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.button("🚀 Log in with Google", on_click=st.login, use_container_width=True)
 
 def load_config(config_file):
     """Load configuration from file"""
@@ -83,6 +94,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Authentication check
+if not st.user.is_logged_in:
+    login_screen()
+    st.stop()
+
+# User is logged in, get user info
+user_info = st.user
+username = user_info.email.split('@')[0]  # Use part before @ as username
+name = user_info.name or username
+
 # Initialize session state
 if 'labels' not in st.session_state:
     st.session_state.labels = {}
@@ -120,6 +141,19 @@ if 'feature_tasks' not in st.session_state:
     st.session_state.feature_tasks = {}
 if 'auto_save_counter' not in st.session_state:
     st.session_state.auto_save_counter = 0
+
+
+def get_user_filename(base_filename: str) -> str:
+    """Generate user-specific filename using a hash of the user's email."""
+    if st.user.is_logged_in:
+        # Create a short hash of the email for the filename
+        user_hash = hashlib.md5(st.user.email.encode()).hexdigest()[:8]
+        username = f"user_{user_hash}"
+        
+        # Split filename and add username prefix
+        name, ext = os.path.splitext(base_filename)
+        return f"{username}_{name}{ext}"
+    return base_filename
 
 # Load default configuration on startup
 if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
@@ -190,7 +224,7 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                             st.session_state.data[col_name] = ""
                     
                     # Auto-load previously saved labeled data if it exists
-                    labeled_file = "tv_content_labeled.feather"
+                    labeled_file = get_user_filename("tv_content_labeled.feather")
                     if os.path.exists(labeled_file):
                         try:
                             st.session_state.labeled_data = pd.read_feather(labeled_file)
@@ -347,8 +381,8 @@ def save_to_feather():
     """Save labeled data to main feather file, and backup previous version."""
     if not st.session_state.labeled_data.empty:
         try:
-            main_filename = "tv_content_labeled.feather"
-            backup_filename = "tv_content_labeled.bak.feather"
+            main_filename = get_user_filename("tv_content_labeled.feather")
+            backup_filename = get_user_filename("tv_content_labeled.bak.feather")
             # If main file exists, copy to backup
             if os.path.exists(main_filename):
                 shutil.copy2(main_filename, backup_filename)
@@ -567,9 +601,47 @@ def load_labels_from_file(uploaded_file):
         st.error(f"Error loading labels: {str(e)}")
 
 # ===================== MINIMAL SIDEBAR =====================
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("👤 User Info")
+st.sidebar.success(f"✅ Logged in as **{name}**")
+st.sidebar.caption(f"📧 {st.user.email}")
+if st.sidebar.button("🚪 Logout", use_container_width=True):
+    st.logout()
 
-# Configuration file upload
+# Save & Download Section
+if not st.session_state.labeled_data.empty:
+    #st.sidebar.markdown("---")
+    st.sidebar.subheader("💾 Save & Export")
+    
+    # Save button
+    if st.sidebar.button("💾 Save Progress", type="primary", use_container_width=True):
+        filename = save_to_feather()
+        if filename:
+            st.sidebar.success(f"✅ Saved {len(st.session_state.labeled_data)} labels")
+        else:
+            st.sidebar.error("❌ Save failed.")
+    
+    # Download button
+    filename = get_user_filename("tv_content_labeled.feather")
+    if os.path.exists(filename):
+        with open(filename, "rb") as file:
+            st.sidebar.download_button(
+                label="📥 Download Results",
+                data=file.read(),
+                file_name=get_user_filename("tv_content_labeled.feather"),
+                mime="application/octet-stream",
+                use_container_width=True,
+                help="Download your labeled data as a feather file"
+            )
+    else:
+        st.sidebar.button("📥 Download Results", disabled=True, use_container_width=True, help="Save progress first to enable download")
+    
+    # Show progress info
+    st.sidebar.caption(f"📊 {len(st.session_state.labeled_data)} labels saved")
+
+
+# Configuration sidebar section
+#st.sidebar.markdown("---")
+st.sidebar.header("⚙️ Configuration")
 uploaded_config = st.sidebar.file_uploader("Upload config file (.cfg)", type=['cfg'])
 if uploaded_config is not None:
     # Save uploaded file temporarily and load it
@@ -636,14 +708,23 @@ if uploaded_config is not None:
 
 # Display current configuration status
 if st.session_state.classification_tasks:
-    st.sidebar.write("**Classification Tasks:**")
-    for task_key, task_info in st.session_state.classification_tasks.items():
-        st.sidebar.write(f"- {task_info['name']}: {len(task_info['labels'])} labels")
+    #st.sidebar.write("**Classification Tasks:**")
+    with st.sidebar.expander("Classes and Features"):
+        if st.session_state.classification_tasks:
+            #st.markdown("**Classification Tasks**")
+            class_items = []
+            for task_key, task_info in st.session_state.classification_tasks.items():
+                class_items.append(f"{task_info['name']}: {len(task_info['labels'])} classes")
+            #st.markdown("**Classification Tasks**<br>"+"<br>".join([f"<span style='font-size: 0.8em;'>{item}</span>" for item in class_items]), unsafe_allow_html=True)
+            st.markdown(f"""<div style="line-height: 0.2;"><u>Classification Tasks</u></div><div style="font-size: 0.8em; line-height: 1.18;"><br>{"<br>".join(class_items)}</div>""", unsafe_allow_html=True)
 
 if st.session_state.feature_tasks:
-    st.sidebar.write("**Feature Tasks:**")
-    for task_key, task_info in st.session_state.feature_tasks.items():
-        st.sidebar.write(f"- {task_info['name']}: {len(task_info['labels'])} options")
+            st.write("**Feature Tasks**")
+            feature_items = []
+            for task_key, task_info in st.session_state.feature_tasks.items():
+                feature_items.append(f"{task_info['name']}: {len(task_info['labels'])} options")
+            st.markdown(f"""<div style="line-height: 0.2;"><u>Classification Tasks</u></div><div style="font-size: 0.8em; line-height: 1.18;"><br>{"<br>".join(class_items)}</div>""", unsafe_allow_html=True)
+
 
 # Text highlighting configuration
 st.sidebar.subheader("🎨 Text Highlighting")
@@ -680,36 +761,6 @@ with st.sidebar.expander("Theme Settings Help"):
     💡 **Tip**: You can also add `?theme=dark` or `?theme=light` to the URL
     """)
 
-# Save & Download Section
-if not st.session_state.labeled_data.empty:
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💾 Save & Export")
-    
-    # Save button
-    if st.sidebar.button("💾 Save Progress", type="primary", use_container_width=True):
-        filename = save_to_feather()
-        if filename:
-            st.sidebar.success(f"✅ Saved {len(st.session_state.labeled_data)} labels")
-        else:
-            st.sidebar.error("❌ Save failed.")
-    
-    # Download button
-    filename = "tv_content_labeled.feather"
-    if os.path.exists(filename):
-        with open(filename, "rb") as file:
-            st.sidebar.download_button(
-                label="📥 Download Results",
-                data=file.read(),
-                file_name="tv_content_labeled.feather",
-                mime="application/octet-stream",
-                use_container_width=True,
-                help="Download your labeled data as a feather file"
-            )
-    else:
-        st.sidebar.button("📥 Download Results", disabled=True, use_container_width=True, help="Save progress first to enable download")
-    
-    # Show progress info
-    st.sidebar.caption(f"📊 {len(st.session_state.labeled_data)} labels saved")
 
 # Main content area
 # Reduce top padding with custom CSS

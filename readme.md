@@ -1,9 +1,11 @@
 # TV Content Labeling Tool
 
-A Streamlit application for labeling and annotating TV content data with advanced text processing and visualization features.
+A Streamlit application for labeling and annotating TV content data with advanced text processing, visualization features, and **multi-user authentication**.
 
 ## Features
 
+- **🔐 User Authentication**: Secure login system with user-specific data isolation
+- **👥 Multi-User Support**: Each user gets their own labeled data files
 - **Flexible Data Loading**: 
   - Load large feather files (several GB) directly from local disk paths
   - Upload smaller files (< 200MB) through the web interface
@@ -20,17 +22,51 @@ A Streamlit application for labeling and annotating TV content data with advance
 - **Performance Optimized**: Handles large datasets with memory usage monitoring
 - **Dark Mode**: Toggle between light and dark themes for comfortable viewing
 
-## Installation
+## Quick Start
 
-1. Install the required dependencies:
+1. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Run the Streamlit app:
+2. **Run the app**:
 ```bash
 streamlit run app.py
 ```
+
+3. **Log in with test accounts**:
+   - Username: `admin`, Password: `admin123`
+   - Username: `user1`, Password: `user123`
+   - Username: `labeler`, Password: `label123`
+
+4. **Start labeling!** Each user gets their own data files.
+
+## Authentication System
+
+The app includes a **secure authentication system** that provides:
+
+- ✅ **Secure password hashing** (SHA256)
+- ✅ **Session-based authentication**
+- ✅ **User-specific file storage** (prevents data conflicts)
+- ✅ **Clean login/logout interface**
+- ✅ **Production-ready** (no external dependencies)
+
+### Test Accounts
+
+| Username | Password | Role |
+|----------|----------|------|
+| `admin` | `admin123` | Administrator |
+| `user1` | `user123` | Test User |
+| `labeler` | `label123` | Content Labeler |
+
+### User Data Isolation
+
+Each user's work is automatically saved to separate files:
+- `admin_tv_content_labeled.feather`
+- `user1_tv_content_labeled.feather`
+- `labeler_tv_content_labeled.feather`
+
+For more details, see [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ## Usage
 
