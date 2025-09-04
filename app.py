@@ -11,6 +11,10 @@ import configparser
 import shutil
 import hashlib
 
+def normalize_column_name(name: str) -> str:
+    """Convert column name to lowercase with underscores instead of spaces"""
+    return name.lower().replace(' ', '_')
+
 def update_classification_label(task_key):
     """Callback to update DataFrame when classification widget changes"""
     current_id = st.session_state.current_index
@@ -23,7 +27,7 @@ def update_classification_label(task_key):
     
     # Get task info
     task_info = st.session_state.classification_tasks[task_key]
-    col_name = f"{task_info['name']}_label"
+    col_name = f"{normalize_column_name(task_info['name'])}_label"
     
     # Ensure row exists in DataFrame - this is the ONLY place where rows are created
     if current_id not in st.session_state.labeled_data.index:
@@ -40,9 +44,9 @@ def update_classification_label(task_key):
             
             # Initialize ALL possible label columns to empty strings
             for tk, ti in st.session_state.classification_tasks.items():
-                new_row_data[f"{ti['name']}_label"] = ""
+                new_row_data[f"{normalize_column_name(ti['name'])}_label"] = ""
             for tk, ti in st.session_state.feature_tasks.items():
-                new_row_data[f"{ti['name']}_features"] = ""
+                new_row_data[f"{normalize_column_name(ti['name'])}_features"] = ""
             
             # Create the complete row as a DataFrame and add it
             new_row_df = pd.DataFrame([new_row_data], index=[current_id])
@@ -69,7 +73,7 @@ def update_feature_selection(task_key, feature_name):
     
     # Get task info
     task_info = st.session_state.feature_tasks[task_key]
-    col_name = f"{task_info['name']}_features"
+    col_name = f"{normalize_column_name(task_info['name'])}_features"
     
     # Ensure row exists in DataFrame
     if current_id not in st.session_state.labeled_data.index:
@@ -86,9 +90,9 @@ def update_feature_selection(task_key, feature_name):
             
             # Initialize ALL possible label columns to empty strings
             for tk, ti in st.session_state.classification_tasks.items():
-                new_row_data[f"{ti['name']}_label"] = ""
+                new_row_data[f"{normalize_column_name(ti['name'])}_label"] = ""
             for tk, ti in st.session_state.feature_tasks.items():
-                new_row_data[f"{ti['name']}_features"] = ""
+                new_row_data[f"{normalize_column_name(ti['name'])}_features"] = ""
             
             # Create the complete row as a DataFrame and add it
             new_row_df = pd.DataFrame([new_row_data], index=[current_id])
@@ -331,7 +335,7 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                     
                     # Initialize label columns if they don't exist
                     for task_key, task_info in st.session_state.classification_tasks.items():
-                        col_name = f"{task_info['name']}_label"
+                        col_name = f"{normalize_column_name(task_info['name'])}_label"
                         if col_name not in st.session_state.data.columns:
                             st.session_state.data[col_name] = ""
                     
@@ -342,7 +346,7 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                     
                     # Initialize feature task columns
                     for task_key, task_info in st.session_state.feature_tasks.items():
-                        col_name = f"{task_info['name']}_features"
+                        col_name = f"{normalize_column_name(task_info['name'])}_features"
                         if col_name not in st.session_state.data.columns:
                             st.session_state.data[col_name] = ""
                     
@@ -461,7 +465,7 @@ def is_item_fully_labeled(original_index):
     # Check if all classification tasks have non-empty labels
     if st.session_state.classification_tasks:
         for task_key, task_info in st.session_state.classification_tasks.items():
-            task_col_name = f"{task_info['name']}_label"
+            task_col_name = f"{normalize_column_name(task_info['name'])}_label"
             if (task_col_name not in item_row.index or 
                 pd.isna(item_row[task_col_name]) or 
                 item_row[task_col_name] == "" or 
@@ -977,7 +981,7 @@ else:
                     # Get current value for this task from existing labels using indexed access
                     current_task_value = None
                     if is_already_labeled and current_id in st.session_state.labeled_data.index:
-                        task_col_name = f"{task_info['name']}_label"
+                        task_col_name = f"{normalize_column_name(task_info['name'])}_label"
                         if task_col_name in st.session_state.labeled_data.columns:
                             try:
                                 current_task_value = st.session_state.labeled_data.loc[current_id, task_col_name]
@@ -1020,7 +1024,7 @@ else:
                     # Get current values for this feature task from existing labels using indexed access
                     current_task_features = []
                     if is_already_labeled and current_id in st.session_state.labeled_data.index:
-                        task_col_name = f"{task_info['name']}_features"
+                        task_col_name = f"{normalize_column_name(task_info['name'])}_features"
                         if task_col_name in st.session_state.labeled_data.columns:
                             try:
                                 existing_features_str = st.session_state.labeled_data.loc[current_id, task_col_name]
