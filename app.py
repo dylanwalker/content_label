@@ -11,6 +11,122 @@ import configparser
 import shutil
 import hashlib
 
+def update_classification_label(task_key):
+    """Callback to update DataFrame when classification widget changes"""
+    current_id = st.session_state.current_index
+    widget_key = f"classification_{current_id}_{task_key}"
+    
+    if widget_key not in st.session_state:
+        return
+        
+    new_value = st.session_state[widget_key]
+    
+    # Get task info
+    task_info = st.session_state.classification_tasks[task_key]
+    col_name = f"{task_info['name']}_label"
+    
+    # Ensure row exists in DataFrame - this is the ONLY place where rows are created
+    if current_id not in st.session_state.labeled_data.index:
+        # Create new row with current item data
+        current_row = get_current_row()
+        if current_row is not None:
+            # Build complete row data
+            new_row_data = {}
+            
+            # Add selected columns from original data
+            for col in st.session_state.selected_columns:
+                if col in current_row:
+                    new_row_data[col] = current_row[col]
+            
+            # Initialize ALL possible label columns to empty strings
+            for tk, ti in st.session_state.classification_tasks.items():
+                new_row_data[f"{ti['name']}_label"] = ""
+            for tk, ti in st.session_state.feature_tasks.items():
+                new_row_data[f"{ti['name']}_features"] = ""
+            
+            # Create the complete row as a DataFrame and add it
+            new_row_df = pd.DataFrame([new_row_data], index=[current_id])
+            new_row_df.index.name = 'original_index'
+            
+            # Add the new row - no need for double-check since we already verified it doesn't exist
+            st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df])
+    
+    # Update the specific label column
+    st.session_state.labeled_data.loc[current_id, col_name] = new_value if new_value is not None else ""
+    
+    # Auto-save every 5 updates
+    st.session_state.auto_save_counter += 1
+    if st.session_state.auto_save_counter % 5 == 0:
+        save_to_feather()
+
+def update_feature_selection(task_key, feature_name):
+    """Callback to update DataFrame when feature checkbox changes"""
+    current_id = st.session_state.current_index
+    feature_key = f"feature_{current_id}_{task_key}_{feature_name}"
+    
+    if feature_key not in st.session_state:
+        return
+    
+    # Get task info
+    task_info = st.session_state.feature_tasks[task_key]
+    col_name = f"{task_info['name']}_features"
+    
+    # Ensure row exists in DataFrame
+    if current_id not in st.session_state.labeled_data.index:
+        # Create new row with current item data
+        current_row = get_current_row()
+        if current_row is not None:
+            # Build complete row data
+            new_row_data = {}
+            
+            # Add selected columns from original data
+            for col in st.session_state.selected_columns:
+                if col in current_row:
+                    new_row_data[col] = current_row[col]
+            
+            # Initialize ALL possible label columns to empty strings
+            for tk, ti in st.session_state.classification_tasks.items():
+                new_row_data[f"{ti['name']}_label"] = ""
+            for tk, ti in st.session_state.feature_tasks.items():
+                new_row_data[f"{ti['name']}_features"] = ""
+            
+            # Create the complete row as a DataFrame and add it
+            new_row_df = pd.DataFrame([new_row_data], index=[current_id])
+            new_row_df.index.name = 'original_index'
+            
+            # Add the new row - no need for double-check since we already verified it doesn't exist
+            st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df])
+    
+    # Collect all selected features for this task
+    selected_features = []
+    for feature in task_info['labels']:
+        fkey = f"feature_{current_id}_{task_key}_{feature}"
+        if fkey in st.session_state and st.session_state[fkey]:
+            selected_features.append(feature)
+    
+    # Update the features column
+    features_str = ', '.join(selected_features) if selected_features else ""
+    st.session_state.labeled_data.loc[current_id, col_name] = features_str
+    
+    # Auto-save every 5 updates
+    st.session_state.auto_save_counter += 1
+    if st.session_state.auto_save_counter % 5 == 0:
+        save_to_feather()
+
+def reset_widgets_to_dataframe_values():
+    """Reset all widget values to match the current item's values in the DataFrame"""
+    current_id = st.session_state.current_index
+    
+    # Clear all widget keys for current item to force reset
+    keys_to_clear = []
+    for key in st.session_state.keys():
+        if (key.startswith(f"classification_{current_id}_") or 
+            key.startswith(f"feature_{current_id}_")):
+            keys_to_clear.append(key)
+    
+    for key in keys_to_clear:
+        del st.session_state[key]
+
 def login_screen():
     """Display login screen using Streamlit's built-in authentication"""
     st.header("🔐 Content Labeling Tool")
@@ -114,7 +230,8 @@ if 'data' not in st.session_state:
 if 'data_mode' not in st.session_state:
     st.session_state.data_mode = 'memory'  # Default to memory mode
 if 'labeled_data' not in st.session_state:
-    st.session_state.labeled_data = pd.DataFrame()
+    # Initialize with proper index structure
+    st.session_state.labeled_data = pd.DataFrame().set_index(pd.Index([], name='original_index'))
 if 'file_path' not in st.session_state:
     st.session_state.file_path = ""
 if 'total_rows' not in st.session_state:
@@ -233,7 +350,13 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
                     labeled_file = get_user_filename(get_output_filename())
                     if os.path.exists(labeled_file):
                         try:
-                            st.session_state.labeled_data = pd.read_feather(labeled_file)
+                            loaded_df = pd.read_feather(labeled_file)
+                            # Convert to proper indexed DataFrame
+                            if 'original_index' in loaded_df.columns:
+                                st.session_state.labeled_data = loaded_df.set_index('original_index')
+                            else:
+                                loaded_df['original_index'] = loaded_df.index
+                                st.session_state.labeled_data = loaded_df.set_index('original_index')
                         except Exception:
                             # If loading fails, continue with empty labeled_data
                             pass
@@ -296,72 +419,11 @@ def get_current_row():
     
     return None
 
-def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dict, feature_choices: Dict = None, features: List[str] = None):
-    """Save a labeled row with multiple classification tasks and feature tasks to the labeled_data dataframe."""
-    # Create new row with selected columns plus labels
-    new_row = {}
-    
-    # Determine which columns to save - use output config if available, otherwise selected columns
-    columns_to_save = st.session_state.selected_columns
-    if hasattr(st.session_state, 'output_config') and st.session_state.output_config and st.session_state.output_config.get('columns'):
-        # Filter output columns to only include ones that exist in the current data
-        valid_output_columns = [col for col in st.session_state.output_config['columns'] if col in row_data.index]
-        if valid_output_columns:
-            columns_to_save = valid_output_columns
-    
-    # Add selected/configured columns from original data
-    for col in columns_to_save:
-        if col in row_data:
-            new_row[col] = row_data[col]
-    
-    # Add metadata
-    new_row['original_index'] = st.session_state.current_index
-    
-    # Add each classification task as a separate column
-    for task_key, choice in classification_choices.items():
-        task_info = st.session_state.classification_tasks[task_key]
-        task_col_name = f"{task_info['name']}_label"
-        # Handle NaN and None values
-        if pd.isna(choice) or choice is None or choice == "None":
-            new_row[task_col_name] = ""
-        else:
-            new_row[task_col_name] = str(choice)
-    
-    # Add feature tasks
-    if feature_choices:
-        for task_key, selected_features in feature_choices.items():
-            task_info = st.session_state.feature_tasks[task_key]
-            task_col_name = f"{task_info['name']}_features"
-            # Handle NaN and None values
-            if pd.isna(selected_features) or selected_features is None:
-                new_row[task_col_name] = ""
-            elif isinstance(selected_features, (list, tuple)) and len(selected_features) > 0:
-                new_row[task_col_name] = ', '.join(str(f) for f in selected_features if not pd.isna(f))
-            else:
-                new_row[task_col_name] = ""
-    
-    # Add legacy features (for backward compatibility)
-    if features:
-        # Handle NaN and None values
-        if pd.isna(features) or features is None:
-            new_row['label_features'] = ""
-        elif isinstance(features, (list, tuple)) and len(features) > 0:
-            new_row['label_features'] = ', '.join(str(f) for f in features if not pd.isna(f))
-        else:
-            new_row['label_features'] = ""
-    
-    # Convert to DataFrame and append
-    new_row_df = pd.DataFrame([new_row])
-    
-    if st.session_state.labeled_data.empty:
-        st.session_state.labeled_data = new_row_df
-    else:
-        st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df], ignore_index=True)
-    
-    # Increment auto-save counter and check for auto-save
-    st.session_state.auto_save_counter += 1
-    if st.session_state.auto_save_counter % 5 == 0:
-        save_to_feather()
+# OLD FUNCTION - No longer used, replaced by callback-based updates
+# def save_labeled_row_multi_task(row_data: pd.Series, classification_choices: Dict, feature_choices: Dict = None, features: List[str] = None):
+#     """Save a labeled row with multiple classification tasks and feature tasks to the labeled_data dataframe."""
+#     # This function has been replaced by update_classification_label and update_feature_selection callbacks
+#     # that update the DataFrame immediately when widgets change
 
 def save_to_feather():
     """Save labeled data to main feather file, and backup previous version."""
@@ -377,7 +439,9 @@ def save_to_feather():
             if os.path.exists(main_filename):
                 shutil.copy2(main_filename, backup_filename)
             # Save current labeled data to main file
-            st.session_state.labeled_data.to_feather(main_filename)
+            # Reset index to make original_index a regular column for saving
+            df_to_save = st.session_state.labeled_data.reset_index()
+            df_to_save.to_feather(main_filename)
             return main_filename
         except Exception as e:
             return None
@@ -388,71 +452,34 @@ def is_item_fully_labeled(original_index):
     if st.session_state.labeled_data.empty:
         return False
     
-    # Find the row for this item
-    item_rows = st.session_state.labeled_data[
-        st.session_state.labeled_data['original_index'] == original_index
-    ]
-    
-    if item_rows.empty:
+    # Use index-based access for better performance
+    if original_index not in st.session_state.labeled_data.index:
         return False
     
-    item_row = item_rows.iloc[0]
+    item_row = st.session_state.labeled_data.loc[original_index]
     
     # Check if all classification tasks have non-empty labels
     if st.session_state.classification_tasks:
         for task_key, task_info in st.session_state.classification_tasks.items():
             task_col_name = f"{task_info['name']}_label"
-            if task_col_name not in item_row or not item_row[task_col_name] or item_row[task_col_name] == "None":
+            if (task_col_name not in item_row.index or 
+                pd.isna(item_row[task_col_name]) or 
+                item_row[task_col_name] == "" or 
+                item_row[task_col_name] == "None"):
                 return False
         return True
     else:
         # Backward compatibility for single classification
-        if 'label_classification' in item_row:
-            return item_row['label_classification'] is not None and item_row['label_classification'] != "None"
+        if 'label_classification' in item_row.index:
+            value = item_row['label_classification']
+            return not pd.isna(value) and value != "" and value != "None"
     
     return False
 
-def save_current_selections():
-    """Save current widget selections automatically (like original app)."""
-    if not (st.session_state.file_path and st.session_state.current_index < st.session_state.total_rows):
-        return
-    
-    current_id = st.session_state.current_index
-    current_row = get_current_row()
-    if current_row is None:
-        return
-    
-    # Check if there are any selections to save
-    has_selections = False
-    classification_choices = {}
-    feature_choices = {}
-    
-    # Check classification choices
-    if st.session_state.classification_tasks:
-        for task_key, task_info in st.session_state.classification_tasks.items():
-            widget_key = f"classification_{current_id}_{task_key}"
-            if widget_key in st.session_state:
-                choice = st.session_state[widget_key]
-                if choice and choice != "None":
-                    classification_choices[task_key] = choice
-                    has_selections = True
-                else:
-                    classification_choices[task_key] = None
-    
-    # Check feature choices
-    if st.session_state.feature_tasks:
-        for task_key, task_info in st.session_state.feature_tasks.items():
-            selected_features = []
-            for feature in task_info['labels']:
-                feature_key = f"feature_{current_id}_{task_key}_{feature}"
-                if feature_key in st.session_state and st.session_state[feature_key]:
-                    selected_features.append(feature)
-                    has_selections = True
-            feature_choices[task_key] = selected_features
-    
-    # Save if there are any selections
-    if has_selections:
-        save_labeled_row_multi_task(current_row, classification_choices, feature_choices, [])
+# OLD FUNCTION - No longer used, replaced by callback-based updates
+# def save_current_selections():
+#     """Save current widget selections automatically (like original app)."""
+#     # This function is no longer needed since widgets now update the DataFrame directly via callbacks
 
 def load_data_file(file_path: str):
     """Load a data file, automatically choosing chunked or memory mode based on file size."""
@@ -490,8 +517,16 @@ def load_data_file(file_path: str):
 def load_labeled_data_from_feather(file_path: str):
     """Load previously saved labeled data from feather file."""
     try:
-        st.session_state.labeled_data = pd.read_feather(file_path)
+        loaded_df = pd.read_feather(file_path)
         
+        # Convert to proper indexed DataFrame
+        if 'original_index' in loaded_df.columns:
+            # Set original_index as the index
+            st.session_state.labeled_data = loaded_df.set_index('original_index')
+        else:
+            # For backward compatibility, use integer index as original_index
+            loaded_df['original_index'] = loaded_df.index
+            st.session_state.labeled_data = loaded_df.set_index('original_index')
         
         st.success(f"Loaded {len(st.session_state.labeled_data)} previously labeled items!")
     except Exception as e:
@@ -807,17 +842,7 @@ else:
     
     # Check if this item is already labeled
     current_id = st.session_state.current_index
-    is_already_labeled = current_id in st.session_state.labeled_data['original_index'].values if not st.session_state.labeled_data.empty else False
-    
-    if is_already_labeled:
-        existing_label_row = st.session_state.labeled_data[st.session_state.labeled_data['original_index'] == current_id].iloc[0]
-        existing_classification = existing_label_row.get('label_classification', '')
-        existing_features_value = existing_label_row.get('label_features', '')
-        # Handle NaN values from pandas
-        if pd.isna(existing_features_value) or existing_features_value is None:
-            existing_features = []
-        else:
-            existing_features = existing_features_value.split(', ') if existing_features_value else []
+    is_already_labeled = current_id in st.session_state.labeled_data.index if not st.session_state.labeled_data.empty else False
     
     # Beautify and highlight text
     beautified_text = beautify_text(current_text)
@@ -857,14 +882,14 @@ else:
         
         with nav_cols[0]:
             if st.button("⏮️", disabled=st.session_state.current_index <= 0, key="nav_start", help="First"):
-                save_current_selections()
                 st.session_state.current_index = 0
+                reset_widgets_to_dataframe_values()
                 st.rerun()
         
         with nav_cols[1]:
             if st.button("◀️", disabled=st.session_state.current_index <= 0, key="nav_previous", help="Previous"):
-                save_current_selections()
                 st.session_state.current_index -= 1
+                reset_widgets_to_dataframe_values()
                 st.rerun()
         
         with nav_cols[2]:
@@ -872,32 +897,39 @@ else:
         
         with nav_cols[3]:
             if st.button("▶️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_next", help="Next"):
-                save_current_selections()
                 st.session_state.current_index += 1
+                reset_widgets_to_dataframe_values()
                 st.rerun()
         
         with nav_cols[4]:
             if st.button("⏭️", disabled=st.session_state.current_index >= st.session_state.total_rows - 1, key="nav_end", help="Last"):
-                save_current_selections()
                 st.session_state.current_index = st.session_state.total_rows - 1
+                reset_widgets_to_dataframe_values()
                 st.rerun()
         
         with nav_cols[5]:
             # Find next unlabeled item
             if not st.session_state.labeled_data.empty:
-                unlabeled_indices = [i for i in range(st.session_state.total_rows) if not is_item_fully_labeled(i)]
-                if unlabeled_indices:
-                    next_unlabeled = min([i for i in unlabeled_indices if i > st.session_state.current_index], default=min(unlabeled_indices))
-                    if st.button("🔍", key="nav_next_unlabeled", help="Next Unlabeled"):
-                        save_current_selections()
-                        st.session_state.current_index = next_unlabeled
+                try:
+                    unlabeled_indices = [i for i in range(st.session_state.total_rows) if not is_item_fully_labeled(i)]
+                    if unlabeled_indices:
+                        next_unlabeled = min([i for i in unlabeled_indices if i > st.session_state.current_index], default=min(unlabeled_indices))
+                        if st.button("🔍", key="nav_next_unlabeled", help="Next Unlabeled"):
+                            st.session_state.current_index = next_unlabeled
+                            reset_widgets_to_dataframe_values()
+                            st.rerun()
+                    else:
+                        st.button("✅", disabled=True, key="nav_all_labeled", help="All Labeled")
+                except Exception as e:
+                    # Fallback if there's an error in checking labeled status
+                    if st.button("🔍", key="nav_next_unlabeled_error", help="Next Unlabeled"):
+                        st.session_state.current_index = min(st.session_state.current_index + 1, st.session_state.total_rows - 1)
+                        reset_widgets_to_dataframe_values()
                         st.rerun()
-                else:
-                    st.button("✅", disabled=True, key="nav_all_labeled", help="All Labeled")
             else:
                 if st.button("🔍", key="nav_next_unlabeled_fallback", help="Next Unlabeled"):
-                    save_current_selections()
                     st.session_state.current_index = min(st.session_state.current_index + 1, st.session_state.total_rows - 1)
+                    reset_widgets_to_dataframe_values()
                     st.rerun()
         
         with nav_cols[6]:
@@ -905,21 +937,16 @@ else:
         
         with nav_cols[7]:
             if st.button("🎯", key="nav_jump", help="Jump to item"):
-                save_current_selections()
                 st.session_state.current_index = jump_to - 1
+                reset_widgets_to_dataframe_values()
                 st.rerun()
 
     # Labeling section
     st.subheader("🏷️ Labels")
     
-    # Initialize current labels
+    # Initialize current labels (these are no longer used since we get values directly from DataFrame)
     current_classification = None
     current_features = []
-    
-    # Load existing labels if already labeled
-    if is_already_labeled:
-        current_classification = existing_classification if existing_classification else None
-        current_features = [f for f in existing_features if f]
     
     # Combined labeling section (classification tasks + features in same row)
     
@@ -942,35 +969,38 @@ else:
                     st.markdown(f"**{task_info['name']}**")
                     st.caption("(pick one)")
                     
-                    # Get current value for this task from existing labels (simplified like original)
+                    # Get current value for this task from existing labels using indexed access
                     current_task_value = None
-                    if is_already_labeled:
-                        # Look for existing label for this task
-                        existing_row = st.session_state.labeled_data[
-                            st.session_state.labeled_data['original_index'] == current_id
-                        ]
-                        if not existing_row.empty:
-                            task_col_name = f"{task_info['name']}_label"
-                            if task_col_name in existing_row.columns:
-                                current_task_value = existing_row.iloc[0][task_col_name]
-                                # Handle NaN values
-                                if pd.isna(current_task_value):
+                    if is_already_labeled and current_id in st.session_state.labeled_data.index:
+                        task_col_name = f"{task_info['name']}_label"
+                        if task_col_name in st.session_state.labeled_data.columns:
+                            try:
+                                current_task_value = st.session_state.labeled_data.loc[current_id, task_col_name]
+                                # Ensure we have a scalar value, not a Series
+                                if isinstance(current_task_value, pd.Series):
+                                    current_task_value = current_task_value.iloc[0] if len(current_task_value) > 0 else None
+                                # Handle NaN values - use pd.isna() on scalar values only
+                                if pd.isna(current_task_value) or str(current_task_value) in ["", "nan", "None"]:
                                     current_task_value = None
+                            except (KeyError, IndexError):
+                                current_task_value = None
                     
                     # Calculate default index directly (like original app)
-                    if current_task_value and current_task_value in task_info['labels']:
-                        default_index = task_info['labels'].index(current_task_value) + 1
+                    if current_task_value is not None and str(current_task_value) in task_info['labels']:
+                        default_index = task_info['labels'].index(str(current_task_value)) + 1
                     else:
                         default_index = 0
                     
-                    # Create radio button with simple key (exactly like original)
+                    # Create radio button with callback
                     classification_choices[task_key] = st.radio(
                         f"Select {task_info['name']}",
                         options=[None] + task_info['labels'],
                         index=default_index,
                         format_func=lambda x: "None" if x is None else x,
                         key=f"classification_{current_id}_{task_key}",
-                        label_visibility="collapsed"
+                        label_visibility="collapsed",
+                        on_change=update_classification_label,
+                        args=(task_key,)
                     )
                     col_idx += 1
         
@@ -982,37 +1012,40 @@ else:
                     st.markdown(f"**{task_info['name']}**")
                     st.caption("(pick zero or more)")
                     
-                    # Get current values for this feature task from existing labels
+                    # Get current values for this feature task from existing labels using indexed access
                     current_task_features = []
-                    if is_already_labeled:
-                        # Look for existing features for this task
-                        existing_row = st.session_state.labeled_data[
-                            st.session_state.labeled_data['original_index'] == current_id
-                        ]
-                        if not existing_row.empty:
-                            task_col_name = f"{task_info['name']}_features"
-                            if task_col_name in existing_row.columns:
-                                existing_features_str = existing_row.iloc[0][task_col_name]
+                    if is_already_labeled and current_id in st.session_state.labeled_data.index:
+                        task_col_name = f"{task_info['name']}_features"
+                        if task_col_name in st.session_state.labeled_data.columns:
+                            try:
+                                existing_features_str = st.session_state.labeled_data.loc[current_id, task_col_name]
+                                # Ensure we have a scalar value, not a Series
+                                if isinstance(existing_features_str, pd.Series):
+                                    existing_features_str = existing_features_str.iloc[0] if len(existing_features_str) > 0 else None
                                 # Handle NaN values from pandas
-                                if pd.isna(existing_features_str) or existing_features_str is None:
+                                if pd.isna(existing_features_str) or str(existing_features_str) in ["", "nan", "None"]:
                                     current_task_features = []
                                 elif existing_features_str:
-                                    current_task_features = [f.strip() for f in existing_features_str.split(',') if f.strip()]
+                                    current_task_features = [f.strip() for f in str(existing_features_str).split(',') if f.strip()]
                                 else:
                                     current_task_features = []
+                            except (KeyError, IndexError):
+                                current_task_features = []
                     
                     # Create checkboxes for this feature task
                     selected_task_features = []
                     for feature in task_info['labels']:
                         feature_key = f"feature_{current_id}_{task_key}_{feature}"
                         
-                        # Initialize session state if not exists
-                        if feature_key not in st.session_state:
-                            st.session_state[feature_key] = feature in current_task_features
+                        # Set current value based on DataFrame data (always refresh from DataFrame)
+                        current_value = feature in current_task_features
                         
                         if st.checkbox(
                             feature,
-                            key=feature_key
+                            key=feature_key,
+                            value=current_value,
+                            on_change=update_feature_selection,
+                            args=(task_key, feature)
                         ):
                             selected_task_features.append(feature)
                     

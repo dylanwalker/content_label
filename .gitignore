@@ -109,3 +109,6 @@ dmypy.json
 
 # Streamlit secrets only (keep config.toml)
 .streamlit/secrets.toml
+
+# Github instructions
+.github/instructions/copilot-instructions.md
