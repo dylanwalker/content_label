@@ -597,11 +597,11 @@ if not st.session_state.labeled_data.empty:
     st.sidebar.subheader("💾 Save & Export")
     
     # Save button
+    save_clicked = False
     if st.sidebar.button("💾 Save Progress", type="primary", use_container_width=True):
+        save_clicked = True
         filename = save_to_feather()
-        if filename:
-            st.sidebar.success(f"✅ Saved {len(st.session_state.labeled_data)} labels")
-        else:
+        if not filename:
             st.sidebar.error("❌ Save failed.")
     
     # Download button
@@ -620,7 +620,12 @@ if not st.session_state.labeled_data.empty:
         st.sidebar.button("📥 Download Results", disabled=True, use_container_width=True, help="Save progress first to enable download")
     
     # Show progress info
-    st.sidebar.caption(f"📊 {len(st.session_state.labeled_data)} labels saved")
+    if save_clicked and filename:
+        st.sidebar.caption(f"✅ Saved {len(st.session_state.labeled_data)} items.")
+    elif save_clicked and not filename:
+        st.sidebar.caption("❌ Save failed.")
+    else:
+        st.sidebar.caption(f"📊 {len(st.session_state.labeled_data)} items edited.")
 
 
 # Configuration sidebar section
