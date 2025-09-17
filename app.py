@@ -56,7 +56,11 @@ def update_classification_label(task_key):
             st.session_state.labeled_data = pd.concat([st.session_state.labeled_data, new_row_df])
     
     # Update the specific label column
+    # Store empty string for None values, but preserve the actual selection for immediate feedback
     st.session_state.labeled_data.loc[current_id, col_name] = new_value if new_value is not None else ""
+    
+    # Set flag to trigger rerun for immediate visual feedback
+    st.session_state.widget_updated = True
     
     # Auto-save every 5 updates
     st.session_state.auto_save_counter += 1
@@ -130,6 +134,9 @@ def reset_widgets_to_dataframe_values():
     
     for key in keys_to_clear:
         del st.session_state[key]
+    
+    # Force Streamlit to rerun to refresh widget states
+    # This ensures widgets show the correct values from DataFrame
 
 def login_screen():
     """Display login screen using Streamlit's built-in authentication"""
@@ -774,6 +781,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Check for immediate rerun flag set by widget callbacks
+if st.session_state.get('widget_updated', False):
+    st.session_state.widget_updated = False
+    st.rerun()
+
 st.markdown('<h1 style="margin-top: 0; margin-bottom: 1rem;">🏷️ Content Labeling Tool</h1>', unsafe_allow_html=True)
 
 if st.session_state.data is None:
@@ -984,13 +996,15 @@ else:
                         task_col_name = f"{normalize_column_name(task_info['name'])}_label"
                         if task_col_name in st.session_state.labeled_data.columns:
                             try:
-                                current_task_value = st.session_state.labeled_data.loc[current_id, task_col_name]
+                                stored_value = st.session_state.labeled_data.loc[current_id, task_col_name]
                                 # Ensure we have a scalar value, not a Series
-                                if isinstance(current_task_value, pd.Series):
-                                    current_task_value = current_task_value.iloc[0] if len(current_task_value) > 0 else None
-                                # Handle NaN values - use pd.isna() on scalar values only
-                                if pd.isna(current_task_value) or str(current_task_value) in ["", "nan", "None"]:
-                                    current_task_value = None
+                                if isinstance(stored_value, pd.Series):
+                                    stored_value = stored_value.iloc[0] if len(stored_value) > 0 else None
+                                # Convert stored value: empty string means None was selected
+                                if pd.isna(stored_value) or str(stored_value) in ["", "nan", "None"]:
+                                    current_task_value = None  # This will map to index 0 (None option)
+                                else:
+                                    current_task_value = str(stored_value)
                             except (KeyError, IndexError):
                                 current_task_value = None
                     
