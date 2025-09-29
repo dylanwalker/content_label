@@ -211,7 +211,14 @@ def load_config(config_file):
             'labels': [label.strip() for label in config['features']['labels'].split(',')]
         }
     
-    return data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config
+    # Load other configuration
+    other_config = {}
+    if 'other' in config:
+        other_config = {
+            'item_text_margins': float(config['other'].get('item_text_margins', '0.05'))
+        }
+    
+    return data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config, other_config
 
 # Configure page
 st.set_page_config(
@@ -259,6 +266,8 @@ if 'text_column' not in st.session_state:
     st.session_state.text_column = 'content'
 if 'highlight_words' not in st.session_state:
     st.session_state.highlight_words = []
+if 'item_text_margins' not in st.session_state:
+    st.session_state.item_text_margins = 0.05
 if 'classification_labels' not in st.session_state:
     st.session_state.classification_labels = []
 if 'classification_tasks' not in st.session_state:
@@ -291,7 +300,7 @@ def get_output_filename() -> str:
 
 # Load default configuration on startup
 if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
-    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config = load_config('default.cfg')
+    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config, other_config = load_config('default.cfg')
     st.session_state.classification_tasks = classification_tasks
     st.session_state.feature_tasks = feature_tasks
     if legacy_features and 'labels' in legacy_features:
@@ -302,6 +311,10 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
     # Store output configuration
     if output_config:
         st.session_state.output_config = output_config
+    
+    # Load other configuration (margins, etc.)
+    if other_config and 'item_text_margins' in other_config:
+        st.session_state.item_text_margins = other_config['item_text_margins']
     
     # Auto-load data file if specified and exists
     if data_config and 'file_path' in data_config:
@@ -648,9 +661,13 @@ if uploaded_config is not None:
     with open('temp_config.cfg', 'wb') as f:
         f.write(uploaded_config.getbuffer())
     
-    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config = load_config('temp_config.cfg')
+    data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config, other_config = load_config('temp_config.cfg')
     st.session_state.classification_tasks = classification_tasks
     st.session_state.feature_tasks = feature_tasks
+    
+    # Load other configuration
+    if other_config and 'item_text_margins' in other_config:
+        st.session_state.item_text_margins = other_config['item_text_margins']
     
     # Load highlighting words from config
     if highlighting_config and 'words' in highlighting_config:
@@ -746,6 +763,16 @@ if highlight_words_input:
         word.strip() for word in highlight_words_input.split(',') 
         if word.strip()
     ]
+
+# Text margin configuration
+st.session_state.item_text_margins = st.sidebar.slider(
+    "📏 Text Margins (%)",
+    min_value=0.0,
+    max_value=0.49,
+    value=st.session_state.item_text_margins,
+    step=0.01,
+    help="Adjust the left and right margins around the formatted text as percentage of window width"
+)
 
 # App Theme Selection
 st.sidebar.subheader("🎨 App Theme")
@@ -875,17 +902,22 @@ else:
     
     # Use Streamlit's container with larger height to minimize scrolling
     # Use st.text() to avoid markdown interpretation
-    with st.container(height=300, border=True):
+    with st.container(height=400, border=True):
         if st.session_state.highlight_words:
             # For highlighting, we need to use markdown but escape it first
             import html
             escaped_text = html.escape(beautified_text)
             # Re-apply highlighting to escaped text
             highlighted_escaped_text = highlight_text(escaped_text, st.session_state.highlight_words, highlight_color)
-            st.markdown(highlighted_escaped_text, unsafe_allow_html=True)
+            # Apply margins using HTML div with inline styles
+            margin_percent = st.session_state.item_text_margins * 100
+            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%;">{highlighted_escaped_text}</div>', unsafe_allow_html=True)
         else:
-            # No highlighting needed, use plain text to avoid markdown interpretation
-            st.text(beautified_text)
+            # No highlighting needed, but still apply margins using a styled div
+            import html
+            escaped_text = html.escape(beautified_text)
+            margin_percent = st.session_state.item_text_margins * 100
+            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%; white-space: pre-wrap;">{escaped_text}</div>', unsafe_allow_html=True)
     
     # Show additional column data if selected
     if len(st.session_state.selected_columns) > 1:
