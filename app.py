@@ -215,7 +215,8 @@ def load_config(config_file):
     other_config = {}
     if 'other' in config:
         other_config = {
-            'item_text_margins': float(config['other'].get('item_text_margins', '0.05'))
+            'item_text_margins': float(config['other'].get('item_text_margins', '0.05')),
+            'additional_columns_to_show': [col.strip() for col in config['other'].get('additional_columns_to_show', '').split(',') if col.strip()]
         }
     
     return data_config, highlighting_config, classification_tasks, feature_tasks, legacy_features, output_config, other_config
@@ -268,6 +269,10 @@ if 'highlight_words' not in st.session_state:
     st.session_state.highlight_words = []
 if 'item_text_margins' not in st.session_state:
     st.session_state.item_text_margins = 0.05
+if 'container_height' not in st.session_state:
+    st.session_state.container_height = 400
+if 'additional_columns_to_show' not in st.session_state:
+    st.session_state.additional_columns_to_show = []
 if 'classification_labels' not in st.session_state:
     st.session_state.classification_labels = []
 if 'classification_tasks' not in st.session_state:
@@ -315,6 +320,8 @@ if not st.session_state.classification_tasks and os.path.exists('default.cfg'):
     # Load other configuration (margins, etc.)
     if other_config and 'item_text_margins' in other_config:
         st.session_state.item_text_margins = other_config['item_text_margins']
+    if other_config and 'additional_columns_to_show' in other_config:
+        st.session_state.additional_columns_to_show = other_config['additional_columns_to_show']
     
     # Auto-load data file if specified and exists
     if data_config and 'file_path' in data_config:
@@ -668,6 +675,8 @@ if uploaded_config is not None:
     # Load other configuration
     if other_config and 'item_text_margins' in other_config:
         st.session_state.item_text_margins = other_config['item_text_margins']
+    if other_config and 'additional_columns_to_show' in other_config:
+        st.session_state.additional_columns_to_show = other_config['additional_columns_to_show']
     
     # Load highlighting words from config
     if highlighting_config and 'words' in highlighting_config:
@@ -764,6 +773,19 @@ if highlight_words_input:
         if word.strip()
     ]
 
+# Font scaling for content text
+if 'font_scale' not in st.session_state:
+    st.session_state.font_scale = 1.0
+
+st.session_state.font_scale = st.sidebar.slider(
+    "🔤 Content Font Size",
+    min_value=0.5,
+    max_value=2.0,
+    value=st.session_state.font_scale,
+    step=0.1,
+    help="Scale the font size of the main content text"
+)
+
 # Text margin configuration
 st.session_state.item_text_margins = st.sidebar.slider(
     "📏 Text Margins (%)",
@@ -772,6 +794,16 @@ st.session_state.item_text_margins = st.sidebar.slider(
     value=st.session_state.item_text_margins,
     step=0.01,
     help="Adjust the left and right margins around the formatted text as percentage of window width"
+)
+
+# Container height configuration
+st.session_state.container_height = st.sidebar.slider(
+    "📐 Text Box Height (px)",
+    min_value=200,
+    max_value=800,
+    value=st.session_state.container_height,
+    step=50,
+    help="Adjust the vertical height of the text display container"
 )
 
 # App Theme Selection
@@ -900,30 +932,36 @@ else:
     # Show formatted text only (removed toggle)
     st.markdown("**Formatted text:**")
     
-    # Use Streamlit's container with larger height to minimize scrolling
+    # Use Streamlit's container with configurable height
     # Use st.text() to avoid markdown interpretation
-    with st.container(height=400, border=True):
+    with st.container(height=st.session_state.container_height, border=True):
         if st.session_state.highlight_words:
             # For highlighting, we need to use markdown but escape it first
             import html
             escaped_text = html.escape(beautified_text)
             # Re-apply highlighting to escaped text
             highlighted_escaped_text = highlight_text(escaped_text, st.session_state.highlight_words, highlight_color)
-            # Apply margins using HTML div with inline styles
+            # Apply margins and font scaling using HTML div with inline styles
             margin_percent = st.session_state.item_text_margins * 100
-            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%;">{highlighted_escaped_text}</div>', unsafe_allow_html=True)
+            font_size = f"{st.session_state.font_scale}rem"
+            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%; font-size: {font_size}; line-height: 1.6;">{highlighted_escaped_text}</div>', unsafe_allow_html=True)
         else:
-            # No highlighting needed, but still apply margins using a styled div
+            # No highlighting needed, but still apply margins and font scaling using a styled div
             import html
             escaped_text = html.escape(beautified_text)
             margin_percent = st.session_state.item_text_margins * 100
-            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%; white-space: pre-wrap;">{escaped_text}</div>', unsafe_allow_html=True)
+            font_size = f"{st.session_state.font_scale}rem"
+            st.markdown(f'<div style="margin-left: {margin_percent}%; margin-right: {margin_percent}%; font-size: {font_size}; line-height: 1.6; white-space: pre-wrap;">{escaped_text}</div>', unsafe_allow_html=True)
     
-    # Show additional column data if selected
-    if len(st.session_state.selected_columns) > 1:
-        with st.expander("📋 Additional Column Data"):
-            for col in st.session_state.selected_columns:
-                if col != st.session_state.text_column and col in current_row:
+    # Show additional column data based on config
+    if st.session_state.additional_columns_to_show:
+        # Filter to only show columns that exist in the current row and are configured to show
+        columns_to_display = [col for col in st.session_state.additional_columns_to_show 
+                             if col in current_row.index and col != st.session_state.text_column]
+        
+        if columns_to_display:
+            with st.expander("📋 Additional Column Data"):
+                for col in columns_to_display:
                     st.write(f"**{col}:** {current_row[col]}")
     
     # Compact centered navigation
